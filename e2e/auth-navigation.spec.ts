@@ -11,8 +11,20 @@ test.describe("auth and navigation", () => {
     await loginAs(page, "manager");
     await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
 
-    await loginAs(page, "manager", "/settings");
-    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    for (let index = 0; index < 5; index += 1) {
+      await page.getByRole("link", { name: "Manager" }).click();
+      await expect(page.getByRole("heading", { name: "Manager Dashboard" })).toBeVisible();
+
+      await page.getByRole("link", { name: "Settings" }).click();
+      await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+
+      await page.getByRole("link", { name: "E2E Seed Project" }).click();
+      await expect(page.getByRole("heading", { name: "E2E Seed Project" })).toBeVisible();
+
+      await page.getByRole("link", { name: "Today" }).click();
+      await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
+    }
+
     await expect(page.getByRole("link", { name: "Log out" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Sign in with Labelbox SSO" })).toBeHidden();
 

@@ -143,7 +143,7 @@ export function AppShell({
               <p className="truncate text-xs text-muted-foreground">{profile.email}</p>
             </div>
             <Button asChild size="sm" variant="ghost">
-              <Link href={logoutHref}>Log out</Link>
+              <a href={logoutHref}>Log out</a>
             </Button>
           </div>
         </div>
