@@ -35,6 +35,7 @@ export function AppShell({
 }: AppShellProps) {
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
   const unreadCount = notifications.filter((notification) => !notification.read_at).length;
+  const logoutHref = process.env.E2E_AUTH_BYPASS === "1" ? "/api/e2e/session?logout=1&redirectTo=/" : "/auth/logout";
 
   return (
     <div className="min-h-screen bg-background">
@@ -142,7 +143,7 @@ export function AppShell({
               <p className="truncate text-xs text-muted-foreground">{profile.email}</p>
             </div>
             <Button asChild size="sm" variant="ghost">
-              <Link href="/auth/logout">Log out</Link>
+              <Link href={logoutHref}>Log out</Link>
             </Button>
           </div>
         </div>

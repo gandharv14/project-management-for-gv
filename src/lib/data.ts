@@ -1,7 +1,9 @@
 import { addDays, differenceInCalendarDays, formatISO, subDays } from "date-fns";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { auth0 } from "@/lib/auth0";
+import { getE2ERole, isE2EAuthBypassEnabled, isE2ERole } from "@/lib/e2e-session";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import type {
   Blocker,
@@ -36,13 +38,56 @@ function assertDb<T>(data: T | null, error: { message: string } | null) {
   return data as T;
 }
 
+async function getE2ESessionUser(): Promise<SessionUser | null> {
+  if (!isE2EAuthBypassEnabled()) {
+    return null;
+  }
+
+  const role = (await cookies()).get("e2e-user")?.value ?? getE2ERole();
+
+  if (!isE2ERole(role)) {
+    return null;
+  }
+
+  return {
+    sub: `e2e|${role}`,
+    email: role === "manager" ? "manager.e2e@example.com" : "member.e2e@example.com",
+    name: role === "manager" ? "E2E Manager" : "E2E Member",
+    nickname: role,
+  } satisfies SessionUser;
+}
+
+function logSessionReadError(error: unknown) {
+  const errorInfo =
+    error instanceof Error
+      ? { name: error.name, message: error.message }
+      : { name: "UnknownSessionError", message: String(error) };
+
+  console.warn("[auth] Unable to read Auth0 session", errorInfo);
+}
+
+function isNextDynamicServerError(error: unknown) {
+  return error instanceof Error && error.message.includes("Dynamic server usage:");
+}
+
 export async function getSessionUser() {
+  const e2eUser = await getE2ESessionUser();
+
+  if (e2eUser) {
+    return e2eUser;
+  }
+
   let session: Awaited<ReturnType<typeof auth0.getSession>>;
 
   try {
     session = await auth0.getSession();
-  } catch {
-    redirect("/auth/logout");
+  } catch (error) {
+    if (isNextDynamicServerError(error)) {
+      throw error;
+    }
+
+    logSessionReadError(error);
+    return null;
   }
 
   if (!session?.user) {
