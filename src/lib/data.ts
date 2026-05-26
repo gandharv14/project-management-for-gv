@@ -37,7 +37,13 @@ function assertDb<T>(data: T | null, error: { message: string } | null) {
 }
 
 export async function getSessionUser() {
-  const session = await auth0.getSession();
+  let session: Awaited<ReturnType<typeof auth0.getSession>>;
+
+  try {
+    session = await auth0.getSession();
+  } catch {
+    redirect("/auth/logout");
+  }
 
   if (!session?.user) {
     return null;
