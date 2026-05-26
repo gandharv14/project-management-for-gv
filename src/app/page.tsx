@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -26,7 +25,7 @@ export default async function HomePage() {
             Sign in with your Labelbox SSO account to access the single-tenant workspace.
           </p>
           <Button asChild>
-            <Link href="/login">Sign in with Labelbox SSO</Link>
+            <a href="/login">Sign in with Labelbox SSO</a>
           </Button>
         </CardContent>
       </Card>
