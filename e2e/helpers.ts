@@ -109,6 +109,7 @@ function isMissingColumn(error: { message: string } | null, columnName: string) 
 }
 
 let membershipScopeColumnExists: boolean | null = null;
+let suggestionCategoryColumnExists: boolean | null = null;
 
 export async function hasMembershipScopeColumn() {
   if (membershipScopeColumnExists !== null) {
@@ -127,6 +128,26 @@ export async function hasMembershipScopeColumn() {
   }
 
   membershipScopeColumnExists = true;
+  return true;
+}
+
+export async function hasSuggestionCategoryColumn() {
+  if (suggestionCategoryColumnExists !== null) {
+    return suggestionCategoryColumnExists;
+  }
+
+  const result = await getE2ESupabase().from("suggestions").select("id,category").limit(1);
+
+  if (isMissingColumn(result.error, "category")) {
+    suggestionCategoryColumnExists = false;
+    return false;
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  suggestionCategoryColumnExists = true;
   return true;
 }
 

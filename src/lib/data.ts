@@ -15,6 +15,7 @@ import type {
   ProjectMember,
   RecurringRule,
   Suggestion,
+  SuggestionCategory,
   SuggestionComment,
   Task,
   TaskStatus,
@@ -423,15 +424,38 @@ export async function listBlockers(projectId: string) {
   return assertDb<Blocker[]>(data, error);
 }
 
-export async function listSuggestions(projectId: string, viewerId: string) {
+export async function listSuggestions(projectId: string, viewerId: string, category?: SuggestionCategory) {
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase
+  let query = supabase
     .from("suggestions")
     .select("*, author:profiles!suggestions_author_id_fkey(*)")
-    .eq("project_id", projectId)
-    .order("updated_at", { ascending: false });
+    .eq("project_id", projectId);
 
-  const suggestions = assertDb<Suggestion[]>(data, error);
+  if (category) {
+    query = query.eq("category", category);
+  }
+
+  const { data, error } = await query.order("updated_at", { ascending: false });
+  let suggestions: Array<Omit<Suggestion, "category"> & { category?: SuggestionCategory }>;
+
+  if (isMissingColumn(error, "category")) {
+    if (category && category !== "project") {
+      return [];
+    }
+
+    const legacyResult = await supabase
+      .from("suggestions")
+      .select("*, author:profiles!suggestions_author_id_fkey(*)")
+      .eq("project_id", projectId)
+      .order("updated_at", { ascending: false });
+
+    suggestions = assertDb<Array<Omit<Suggestion, "category"> & { category?: SuggestionCategory }>>(
+      legacyResult.data,
+      legacyResult.error,
+    );
+  } else {
+    suggestions = assertDb<Array<Omit<Suggestion, "category"> & { category?: SuggestionCategory }>>(data, error);
+  }
   const ids = suggestions.map((suggestion) => suggestion.id);
 
   if (ids.length === 0) {
@@ -466,11 +490,42 @@ export async function listSuggestions(projectId: string, viewerId: string) {
   return suggestions
     .map((suggestion) => ({
       ...suggestion,
+      category: suggestion.category ?? "project",
       vote_count: voteCounts.get(suggestion.id) ?? 0,
       comment_count: commentCounts.get(suggestion.id) ?? 0,
       has_voted: viewerVoteSet.has(suggestion.id),
     }))
     .sort((a, b) => (b.vote_count ?? 0) - (a.vote_count ?? 0) || b.updated_at.localeCompare(a.updated_at));
+}
+
+export async function listSuggestionCategoryCounts(projectId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("suggestions")
+    .select("category")
+    .eq("project_id", projectId);
+
+  if (isMissingColumn(error, "category")) {
+    const { count, error: countError } = await supabase
+      .from("suggestions")
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", projectId);
+
+    if (countError) {
+      throw new Error(countError.message);
+    }
+
+    return new Map<SuggestionCategory, number>([["project", count ?? 0]]);
+  }
+
+  const rows = assertDb<Array<Pick<Suggestion, "category">>>(data, error);
+  const counts = new Map<SuggestionCategory, number>();
+
+  for (const row of rows) {
+    counts.set(row.category, (counts.get(row.category) ?? 0) + 1);
+  }
+
+  return counts;
 }
 
 export async function listSuggestionComments(suggestionIds: string[]) {

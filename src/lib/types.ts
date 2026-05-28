@@ -1,11 +1,13 @@
 export const TASK_STATUSES = ["backlog", "today", "in_progress", "blocked", "done"] as const;
 export const BLOCKER_STATUSES = ["open", "acknowledged", "resolved"] as const;
 export const SUGGESTION_STATUSES = ["open", "under_consideration", "accepted", "parked"] as const;
+export const SUGGESTION_CATEGORIES = ["proposal", "project", "management", "process", "tooling", "other"] as const;
 export const RECURRENCE_FREQUENCIES = ["daily", "weekly", "custom"] as const;
 
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type BlockerStatus = (typeof BLOCKER_STATUSES)[number];
 export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number];
+export type SuggestionCategory = (typeof SUGGESTION_CATEGORIES)[number];
 export type RecurrenceFrequency = (typeof RECURRENCE_FREQUENCIES)[number];
 export type ProfileRole = "manager" | "member";
 export type ProfileMembershipScope = "workspace" | "project";
@@ -96,6 +98,7 @@ export type Suggestion = {
   project_id: string;
   title: string;
   description: string | null;
+  category: SuggestionCategory;
   status: SuggestionStatus;
   author_id: string | null;
   promoted_task_id: string | null;

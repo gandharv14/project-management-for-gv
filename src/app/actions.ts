@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { ensureCurrentProfile, nextRunDate, requireManager, requireProjectAccess, todayISO } from "@/lib/data";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { SUGGESTION_CATEGORIES } from "@/lib/types";
 import type {
   BlockerStatus,
   Profile,
@@ -18,6 +19,16 @@ import type {
 
 const profileRoleSchema = z.enum(["manager", "member"]);
 const profileMembershipScopeSchema = z.enum(["workspace", "project"]);
+const suggestionCategorySchema = z.enum(SUGGESTION_CATEGORIES);
+const suggestionImageTypes = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/webp", "webp"],
+  ["image/gif", "gif"],
+]);
+const suggestionScreenshotBucket = "suggestion-screenshots";
+const maxSuggestionImagesPerSubmit = 4;
+const maxSuggestionImageBytes = 5 * 1024 * 1024;
 
 function text(formData: FormData, key: string) {
   const value =
@@ -25,6 +36,71 @@ function text(formData: FormData, key: string) {
     Array.from(formData.entries()).find(([entryKey]) => entryKey.endsWith(`_${key}`))?.[1];
 
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isUploadedFile(value: FormDataEntryValue): value is File {
+  return typeof File !== "undefined" && value instanceof File && value.size > 0;
+}
+
+function suggestionScreenshotFiles(formData: FormData) {
+  const files = formData.getAll("screenshots").filter(isUploadedFile);
+
+  if (files.length > maxSuggestionImagesPerSubmit) {
+    throw new Error(`Upload up to ${maxSuggestionImagesPerSubmit} screenshots at a time.`);
+  }
+
+  for (const file of files) {
+    if (!suggestionImageTypes.has(file.type)) {
+      throw new Error("Screenshots must be PNG, JPEG, WebP, or GIF images.");
+    }
+
+    if (file.size > maxSuggestionImageBytes) {
+      throw new Error("Screenshots must be 5MB or smaller.");
+    }
+  }
+
+  return files;
+}
+
+function appendMarkdownImages(body: string | null, imageMarkdown: string[]) {
+  const attachments = imageMarkdown.join("\n");
+
+  if (!attachments) {
+    return body;
+  }
+
+  return body ? `${body}\n\n${attachments}` : attachments;
+}
+
+async function uploadSuggestionScreenshots(input: {
+  projectId: string;
+  suggestionId: string;
+  threadItemId: string;
+  files: File[];
+}) {
+  if (input.files.length === 0) {
+    return [];
+  }
+
+  const supabase = getSupabaseAdmin();
+
+  return Promise.all(
+    input.files.map(async (file, index) => {
+      const extension = suggestionImageTypes.get(file.type);
+      const objectPath = `${input.projectId}/${input.suggestionId}/${input.threadItemId}/${crypto.randomUUID()}.${extension}`;
+      const { error } = await supabase.storage.from(suggestionScreenshotBucket).upload(objectPath, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const { data } = supabase.storage.from(suggestionScreenshotBucket).getPublicUrl(objectPath);
+      return `![screenshot ${index + 1}](${data.publicUrl})`;
+    }),
+  );
 }
 
 function isMissingRpc(error: { message: string } | null, functionName: string) {
@@ -672,19 +748,43 @@ export async function createSuggestion(formData: FormData) {
   const profile = await ensureCurrentProfile();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
   const title = text(formData, "title");
+  const description = text(formData, "description");
+  const category = suggestionCategorySchema.parse(text(formData, "category") ?? "project");
+  const screenshotFiles = suggestionScreenshotFiles(formData);
 
   if (!title) {
     return;
   }
 
   await requireProjectAccess(profile, projectId);
-
-  await getSupabaseAdmin().from("suggestions").insert({
+  const suggestionId = crypto.randomUUID();
+  const imageMarkdown = await uploadSuggestionScreenshots({
+    projectId,
+    suggestionId,
+    threadItemId: "description",
+    files: screenshotFiles,
+  });
+  const supabase = getSupabaseAdmin();
+  const suggestionValues = {
+    id: suggestionId,
     project_id: projectId,
     title,
-    description: text(formData, "description"),
+    description: appendMarkdownImages(description, imageMarkdown),
     author_id: profile.id,
+  };
+
+  let result = await supabase.from("suggestions").insert({
+    ...suggestionValues,
+    category,
   });
+
+  if (isMissingColumn(result.error, "category")) {
+    result = await supabase.from("suggestions").insert(suggestionValues);
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
 
   revalidatePath(`/projects/${projectId}/suggestions`);
 }
@@ -743,13 +843,15 @@ export async function commentSuggestion(formData: FormData) {
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
   const suggestionId = z.string().uuid().parse(text(formData, "suggestionId"));
   const body = text(formData, "body");
+  const screenshotFiles = suggestionScreenshotFiles(formData);
 
-  if (!body) {
+  if (!body && screenshotFiles.length === 0) {
     return;
   }
 
   await requireProjectAccess(profile, projectId);
-  const { data: suggestion, error: suggestionError } = await getSupabaseAdmin()
+  const supabase = getSupabaseAdmin();
+  const { data: suggestion, error: suggestionError } = await supabase
     .from("suggestions")
     .select("id")
     .eq("id", suggestionId)
@@ -764,13 +866,22 @@ export async function commentSuggestion(formData: FormData) {
     return;
   }
 
-  await getSupabaseAdmin().from("suggestion_comments").insert({
-    suggestion_id: suggestionId,
-    author_id: profile.id,
-    body,
+  const commentId = crypto.randomUUID();
+  const imageMarkdown = await uploadSuggestionScreenshots({
+    projectId,
+    suggestionId,
+    threadItemId: commentId,
+    files: screenshotFiles,
   });
 
-  await getSupabaseAdmin().from("suggestions").update({ updated_at: new Date().toISOString() }).eq("id", suggestionId);
+  await supabase.from("suggestion_comments").insert({
+    id: commentId,
+    suggestion_id: suggestionId,
+    author_id: profile.id,
+    body: appendMarkdownImages(body, imageMarkdown),
+  });
+
+  await supabase.from("suggestions").update({ updated_at: new Date().toISOString() }).eq("id", suggestionId);
   revalidatePath(`/projects/${projectId}/suggestions`);
 }
 

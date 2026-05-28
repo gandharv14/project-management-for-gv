@@ -7,6 +7,7 @@ import {
   E2E_PROJECT_MEMBER,
   getE2ESupabase,
   hasMembershipScopeColumn,
+  hasSuggestionCategoryColumn,
   loginAs,
   resetE2EData,
   todayISO,
@@ -235,12 +236,14 @@ test.describe("core product flows", () => {
     await expect(page.getByText("E2E Seed Today Task")).toHaveCount(0);
 
     const suggestionTitle = "E2E UI Suggestion";
+    const hasSuggestionCategories = await hasSuggestionCategoryColumn();
     const { data: suggestion, error: suggestionError } = await supabase
       .from("suggestions")
       .insert({
         project_id: seed.project.id,
         title: suggestionTitle,
-        description: "This should become a task",
+        description: "**This should become a task**\n\n![workflow screenshot](https://example.com/screenshot.png)",
+        ...(hasSuggestionCategories ? { category: "management" } : {}),
         author_id: seed.manager.id,
       })
       .select("id")
@@ -260,7 +263,7 @@ test.describe("core product flows", () => {
       await supabase.from("suggestion_comments").insert({
         suggestion_id: suggestion.id,
         author_id: seed.member.id,
-        body: "Looks good to me",
+        body: "Looks **good** to me",
       }),
     );
     await assertWrite(await supabase.from("suggestions").update({ status: "accepted" }).eq("id", suggestion.id));
@@ -288,8 +291,20 @@ test.describe("core product flows", () => {
 
     await loginAs(page, "manager", `/projects/${seed.project.id}/suggestions`);
     await expect(page.getByText(suggestionTitle)).toBeVisible();
+    const suggestionThread = page.locator('[data-slot="card"]').filter({ hasText: suggestionTitle }).first();
+    await expect(suggestionThread.getByText(hasSuggestionCategories ? "Management related" : "Project related")).toBeVisible();
+    await expect(page.getByText("This should become a task")).toBeVisible();
+    await expect(page.locator('img[alt="workflow screenshot"]')).toHaveAttribute("src", /screenshot\.png/);
     await expect(page.getByText("Looks good to me")).toBeVisible();
-    await expect(page.getByText("accepted", { exact: true })).toBeVisible();
+    await expect(suggestionThread.getByText("Accepted", { exact: true }).first()).toBeVisible();
+    if (hasSuggestionCategories) {
+      await page.getByRole("link", { name: /Management related/ }).click();
+      await expect(page).toHaveURL(/category=management/);
+      await expect(page.getByText(suggestionTitle)).toBeVisible();
+      await page.getByRole("link", { name: /Proposal/ }).click();
+      await expect(page).toHaveURL(/category=proposal/);
+      await expect(page.getByText(suggestionTitle)).toHaveCount(0);
+    }
 
     await assertWrite(
       await supabase.from("recurring_rules").insert({
