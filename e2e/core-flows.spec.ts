@@ -67,6 +67,27 @@ test.describe("core product flows", () => {
     await loginAs(page, "member", "/settings");
     await expect(page.getByRole("link", { name: projectName })).toBeVisible();
 
+    await loginAs(page, "manager", "/settings");
+    const deletableProjectCard = page.locator(".rounded-xl").filter({ hasText: projectName }).first();
+    await deletableProjectCard.getByRole("button", { name: "Delete project" }).click();
+    const deleteDialog = page.getByRole("dialog");
+    await deleteDialog.getByLabel(`Type ${projectName} to confirm`).fill(projectName);
+    await deleteDialog.getByRole("button", { name: "Delete project" }).click();
+    await expect(deleteDialog).toBeHidden();
+    await expect(page.getByRole("link", { name: projectName })).toHaveCount(0);
+
+    const { data: deletedProject, error: deletedProjectError } = await supabase
+      .from("projects")
+      .select("id")
+      .eq("id", project.id)
+      .maybeSingle();
+
+    if (deletedProjectError) {
+      throw new Error(deletedProjectError.message);
+    }
+
+    expect(deletedProject).toBeNull();
+
     const taskTitle = "E2E UI Task";
     const { data: task, error: taskError } = await supabase
       .from("tasks")

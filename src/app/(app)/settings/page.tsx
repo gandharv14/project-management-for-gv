@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { getAppContext, listProfiles, listProjectMembers } from "@/lib/data";
+import { DeleteProjectDialog } from "./delete-project-dialog";
 
 export default async function SettingsPage() {
   const { profile, projects } = await getAppContext();
@@ -113,7 +114,12 @@ export default async function SettingsPage() {
                   <CardTitle>{project.name}</CardTitle>
                   <CardDescription>{project.description ?? "No description yet."}</CardDescription>
                 </div>
-                <Badge variant="secondary">{members.length} members</Badge>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Badge variant="secondary">{members.length} members</Badge>
+                  {profile.role === "manager" ? (
+                    <DeleteProjectDialog projectId={project.id} projectName={project.name} />
+                  ) : null}
+                </div>
               </div>
             </CardHeader>
             <CardContent className="grid gap-4">

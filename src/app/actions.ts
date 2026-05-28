@@ -185,6 +185,40 @@ export async function addProjectMember(formData: FormData) {
   revalidatePath(`/projects/${projectId}/board`);
 }
 
+export async function deleteProject(formData: FormData) {
+  await requireManager();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const confirmName = text(formData, "confirmName");
+  const supabase = getSupabaseAdmin();
+
+  const { data: project, error: projectError } = await supabase
+    .from("projects")
+    .select("name")
+    .eq("id", projectId)
+    .maybeSingle();
+
+  if (projectError) {
+    throw new Error(projectError.message);
+  }
+
+  if (!project || confirmName !== project.name) {
+    return;
+  }
+
+  const { error } = await supabase.from("projects").delete().eq("id", projectId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/today");
+  revalidatePath("/manager");
+  revalidatePath(`/projects/${projectId}/board`);
+  revalidatePath(`/projects/${projectId}/blockers`);
+  revalidatePath(`/projects/${projectId}/suggestions`);
+}
+
 export async function createTask(formData: FormData) {
   const profile = await ensureCurrentProfile();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
