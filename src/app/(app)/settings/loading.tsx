@@ -5,8 +5,10 @@ export default function SettingsLoading() {
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
       <div className="space-y-2">
-        <Skeleton className="h-9 w-36" />
-        <Skeleton className="h-5 w-full max-w-xl" />
+        <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
+        <p className="text-muted-foreground">
+          Manage the single-team workspace, projects, and project memberships.
+        </p>
       </div>
 
       <Card>

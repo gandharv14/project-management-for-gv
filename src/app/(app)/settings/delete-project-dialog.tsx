@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { deleteProject } from "@/app/actions";
 import { FormSubmitButton } from "@/components/form-submit-button";
@@ -24,6 +25,7 @@ type DeleteProjectDialogProps = {
 };
 
 export function DeleteProjectDialog({ projectId, projectName }: DeleteProjectDialogProps) {
+  const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [confirmName, setConfirmName] = React.useState("");
   const canDelete = confirmName === projectName;
@@ -32,6 +34,8 @@ export function DeleteProjectDialog({ projectId, projectName }: DeleteProjectDia
     await deleteProject(formData);
     setConfirmName("");
     setOpen(false);
+    router.refresh();
+    window.location.reload();
   }
 
   return (

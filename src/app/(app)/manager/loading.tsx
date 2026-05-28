@@ -5,8 +5,10 @@ export default function ManagerLoading() {
   return (
     <div className="flex flex-col gap-6">
       <div className="space-y-2">
-        <Skeleton className="h-9 w-72" />
-        <Skeleton className="h-5 w-full max-w-xl" />
+        <h1 className="text-3xl font-semibold tracking-tight">Manager Dashboard</h1>
+        <p className="text-muted-foreground">
+          Overdue tasks, aging blockers, trending ideas, and recurring duty completion.
+        </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">

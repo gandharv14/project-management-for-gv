@@ -2,6 +2,7 @@ import { differenceInCalendarDays } from "date-fns";
 import type React from "react";
 
 import { createBlocker, updateBlockerStatus } from "@/app/actions";
+import { ActionForm } from "@/components/action-form";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { RealtimeRefresh } from "@/components/realtime-refresh";
 import { Badge } from "@/components/ui/badge";
@@ -68,7 +69,7 @@ export default async function BlockersPage({ params }: { params: Promise<{ proje
                     <p>{blocker.task?.status ?? "Project blocker"}</p>
                   </div>
                 </div>
-                <form action={updateBlockerStatus} className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <ActionForm action={updateBlockerStatus} className="grid gap-2 sm:grid-cols-[1fr_auto]">
                   <input name="projectId" type="hidden" value={projectId} />
                   <input name="blockerId" type="hidden" value={blocker.id} />
                   <Select name="status" defaultValue={blocker.status}>
@@ -79,7 +80,7 @@ export default async function BlockersPage({ params }: { params: Promise<{ proje
                   <FormSubmitButton pendingLabel="Saving..." variant="secondary">
                     Update
                   </FormSubmitButton>
-                </form>
+                </ActionForm>
               </CardContent>
             </Card>
           ))}
@@ -96,7 +97,7 @@ export default async function BlockersPage({ params }: { params: Promise<{ proje
             <CardDescription>Block a task or call out a project-level issue.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form action={createBlocker} className="grid gap-3">
+            <ActionForm action={createBlocker} className="grid gap-3">
               <input name="projectId" type="hidden" value={projectId} />
               <Field label="Task">
                 <Select name="taskId" defaultValue="">
@@ -127,7 +128,7 @@ export default async function BlockersPage({ params }: { params: Promise<{ proje
                 <Textarea name="description" />
               </Field>
               <FormSubmitButton pendingLabel="Raising...">Raise blocker</FormSubmitButton>
-            </form>
+            </ActionForm>
           </CardContent>
         </Card>
       </div>

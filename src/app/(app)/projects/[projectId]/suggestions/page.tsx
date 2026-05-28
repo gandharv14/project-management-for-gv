@@ -8,6 +8,7 @@ import {
   updateSuggestionStatus,
   voteSuggestion,
 } from "@/app/actions";
+import { ActionForm } from "@/components/action-form";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { RealtimeRefresh } from "@/components/realtime-refresh";
 import { Badge } from "@/components/ui/badge";
@@ -63,7 +64,7 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
               <CardContent className="grid gap-4">
                 {suggestion.description ? <p className="text-sm text-muted-foreground">{suggestion.description}</p> : null}
                 <div className="flex flex-wrap gap-2">
-                  <form action={voteSuggestion}>
+                  <ActionForm action={voteSuggestion}>
                     <input name="projectId" type="hidden" value={projectId} />
                     <input name="suggestionId" type="hidden" value={suggestion.id} />
                     <FormSubmitButton
@@ -74,8 +75,8 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                       <ThumbsUp className="h-4 w-4" />
                       Upvote
                     </FormSubmitButton>
-                  </form>
-                  <form action={updateSuggestionStatus} className="flex gap-2">
+                  </ActionForm>
+                  <ActionForm action={updateSuggestionStatus} className="flex gap-2">
                     <input name="projectId" type="hidden" value={projectId} />
                     <input name="suggestionId" type="hidden" value={suggestion.id} />
                     <Select name="status" defaultValue={suggestion.status}>
@@ -87,11 +88,14 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                     <FormSubmitButton pendingLabel="Saving..." size="sm" variant="secondary">
                       Set
                     </FormSubmitButton>
-                  </form>
+                  </ActionForm>
                 </div>
 
                 {suggestion.status === "accepted" && !suggestion.promoted_task_id ? (
-                  <form action={promoteSuggestionToTask} className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_auto]">
+                  <ActionForm
+                    action={promoteSuggestionToTask}
+                    className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[1fr_auto]"
+                  >
                     <input name="projectId" type="hidden" value={projectId} />
                     <input name="suggestionId" type="hidden" value={suggestion.id} />
                     <Select name="assigneeId" defaultValue="">
@@ -103,7 +107,7 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                       ))}
                     </Select>
                     <FormSubmitButton pendingLabel="Promoting...">Promote to task</FormSubmitButton>
-                  </form>
+                  </ActionForm>
                 ) : null}
 
                 <div className="grid gap-2">
@@ -116,7 +120,7 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                     </div>
                   ))}
                 </div>
-                <form action={commentSuggestion} className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                <ActionForm action={commentSuggestion} className="grid gap-2 sm:grid-cols-[1fr_auto]">
                   <input name="projectId" type="hidden" value={projectId} />
                   <input name="suggestionId" type="hidden" value={suggestion.id} />
                   <Input name="body" placeholder="Add a comment" />
@@ -124,7 +128,7 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                     <MessageSquare className="h-4 w-4" />
                     Comment
                   </FormSubmitButton>
-                </form>
+                </ActionForm>
               </CardContent>
             </Card>
           ))}
@@ -141,7 +145,7 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
             <CardDescription>Ideas stay attached to this project.</CardDescription>
           </CardHeader>
           <CardContent>
-            <form action={createSuggestion} className="grid gap-3">
+            <ActionForm action={createSuggestion} className="grid gap-3">
               <input name="projectId" type="hidden" value={projectId} />
               <Field label="Title">
                 <Input name="title" required />
@@ -150,7 +154,7 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                 <Textarea name="description" />
               </Field>
               <FormSubmitButton pendingLabel="Posting...">Post idea</FormSubmitButton>
-            </form>
+            </ActionForm>
           </CardContent>
         </Card>
       </div>

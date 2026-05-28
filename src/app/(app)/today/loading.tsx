@@ -5,8 +5,10 @@ export default function TodayLoading() {
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
       <div className="space-y-2">
-        <Skeleton className="h-9 w-32" />
-        <Skeleton className="h-5 w-full max-w-xl" />
+        <h1 className="text-3xl font-semibold tracking-tight">Today</h1>
+        <p className="text-muted-foreground">
+          Your due, overdue, Today-column, and generated recurring task instances.
+        </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">

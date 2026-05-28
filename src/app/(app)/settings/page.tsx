@@ -1,4 +1,5 @@
 import { addProjectMember, addTeamMember, createProject } from "@/app/actions";
+import { ActionForm } from "@/components/action-form";
 import { AddWorkspaceMemberFormFields } from "@/components/add-workspace-member-form-fields";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { Badge } from "@/components/ui/badge";
@@ -65,7 +66,7 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent className="grid gap-4">
           {profile.role === "manager" ? (
-            <form action={addTeamMember} className="grid gap-3 lg:grid-cols-[1fr_1fr_12rem_auto]">
+            <ActionForm action={addTeamMember} className="grid gap-3 lg:grid-cols-[1fr_1fr_12rem_auto]">
               <div className="grid gap-2">
                 <Label htmlFor="team-display-name">Name</Label>
                 <Input id="team-display-name" name="displayName" placeholder="Ada Lovelace" required />
@@ -86,7 +87,7 @@ export default async function SettingsPage() {
                   Add workspace member
                 </FormSubmitButton>
               </div>
-            </form>
+            </ActionForm>
           ) : null}
 
           <div className="grid gap-2">
@@ -139,14 +140,14 @@ export default async function SettingsPage() {
                 })}
               </div>
               {profile.role === "manager" ? (
-                <form action={addProjectMember} className="grid gap-3 lg:grid-cols-[1fr_auto]">
+                <ActionForm action={addProjectMember} className="grid gap-3 lg:grid-cols-[1fr_auto]">
                   <AddWorkspaceMemberFormFields
                     members={members}
                     projectId={project.id}
                     selectId={`profile-${project.id}`}
                     workspaceMembers={workspaceMembers}
                   />
-                </form>
+                </ActionForm>
               ) : null}
             </CardContent>
           </Card>

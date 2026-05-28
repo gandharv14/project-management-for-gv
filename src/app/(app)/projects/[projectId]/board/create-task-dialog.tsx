@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { createTask } from "@/app/actions";
 import { FormSubmitButton } from "@/components/form-submit-button";
@@ -33,6 +34,7 @@ type CreateTaskDialogProps = {
 };
 
 export function CreateTaskDialog({ projectId, members, columns }: CreateTaskDialogProps) {
+  const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const formRef = React.useRef<HTMLFormElement>(null);
 
@@ -40,6 +42,8 @@ export function CreateTaskDialog({ projectId, members, columns }: CreateTaskDial
     await createTask(formData);
     formRef.current?.reset();
     setOpen(false);
+    router.refresh();
+    window.location.reload();
   }
 
   return (

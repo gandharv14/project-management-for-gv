@@ -2,6 +2,7 @@ import { CalendarClock, CheckCircle2, Repeat, ShieldAlert } from "lucide-react";
 import type React from "react";
 
 import { createBlocker, createRecurringRule, updateTaskStatus } from "@/app/actions";
+import { ActionForm } from "@/components/action-form";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { RealtimeRefresh } from "@/components/realtime-refresh";
 import { Badge } from "@/components/ui/badge";
@@ -74,7 +75,7 @@ export default async function BoardPage({ params }: { params: Promise<{ projectI
           <CardDescription>Creates a fresh task instance every cycle.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <form action={createRecurringRule} className="grid gap-3">
+          <ActionForm action={createRecurringRule} className="grid gap-3">
             <input name="projectId" type="hidden" value={projectId} />
             <div className="grid gap-3 lg:grid-cols-2">
               <Field label="Title">
@@ -114,7 +115,7 @@ export default async function BoardPage({ params }: { params: Promise<{ projectI
                 Add recurrence
               </FormSubmitButton>
             </div>
-          </form>
+          </ActionForm>
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {recurringRules.map((rule) => (
               <div key={rule.id} className="rounded-lg border bg-background/60 p-3 text-sm">
@@ -185,7 +186,7 @@ function TaskCard({ projectId, task }: { projectId: string; task: Task }) {
           {formatDate(task.due_date)}
         </span>
       </div>
-      <form action={updateTaskStatus} className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+      <ActionForm action={updateTaskStatus} className="mt-3 grid grid-cols-[1fr_auto] gap-2">
         <input name="projectId" type="hidden" value={projectId} />
         <input name="taskId" type="hidden" value={task.id} />
         <Select name="status" defaultValue={task.status}>
@@ -198,9 +199,9 @@ function TaskCard({ projectId, task }: { projectId: string; task: Task }) {
         <FormSubmitButton pendingLabel="Moving..." size="sm" variant="secondary">
           Move
         </FormSubmitButton>
-      </form>
+      </ActionForm>
       {task.status === "blocked" ? (
-        <form action={updateTaskStatus} className="mt-2">
+        <ActionForm action={updateTaskStatus} className="mt-2">
           <input name="projectId" type="hidden" value={projectId} />
           <input name="taskId" type="hidden" value={task.id} />
           <input name="status" type="hidden" value="in_progress" />
@@ -208,11 +209,11 @@ function TaskCard({ projectId, task }: { projectId: string; task: Task }) {
             <CheckCircle2 className="h-4 w-4" />
             Confirm unblocked
           </FormSubmitButton>
-        </form>
+        </ActionForm>
       ) : (
         <details className="mt-2">
           <summary className="cursor-pointer text-xs text-muted-foreground">Raise blocker</summary>
-          <form action={createBlocker} className="mt-2 grid gap-2">
+          <ActionForm action={createBlocker} className="mt-2 grid gap-2">
             <input name="projectId" type="hidden" value={projectId} />
             <input name="taskId" type="hidden" value={task.id} />
             <Input name="title" placeholder="What is blocking this?" required />
@@ -221,7 +222,7 @@ function TaskCard({ projectId, task }: { projectId: string; task: Task }) {
               <ShieldAlert className="h-4 w-4" />
               Raise
             </FormSubmitButton>
-          </form>
+          </ActionForm>
         </details>
       )}
     </div>

@@ -3,6 +3,7 @@ import type React from "react";
 import { CalendarDays, CheckCircle2, Repeat } from "lucide-react";
 
 import { updateTaskStatus } from "@/app/actions";
+import { ActionForm } from "@/components/action-form";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { RealtimeRefresh } from "@/components/realtime-refresh";
 import { Badge } from "@/components/ui/badge";
@@ -80,7 +81,7 @@ function TodayTask({
           <Button asChild variant="outline">
             <Link href={`/projects/${task.project_id}/board`}>Open</Link>
           </Button>
-          <form action={updateTaskStatus}>
+          <ActionForm action={updateTaskStatus}>
             <input name="projectId" type="hidden" value={task.project_id} />
             <input name="taskId" type="hidden" value={task.id} />
             <input name="status" type="hidden" value="done" />
@@ -88,7 +89,7 @@ function TodayTask({
               <CheckCircle2 className="h-4 w-4" />
               Done
             </FormSubmitButton>
-          </form>
+          </ActionForm>
         </div>
       </CardContent>
     </Card>

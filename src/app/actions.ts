@@ -20,7 +20,10 @@ const profileRoleSchema = z.enum(["manager", "member"]);
 const profileMembershipScopeSchema = z.enum(["workspace", "project"]);
 
 function text(formData: FormData, key: string) {
-  const value = formData.get(key);
+  const value =
+    formData.get(key) ??
+    Array.from(formData.entries()).find(([entryKey]) => entryKey.endsWith(`_${key}`))?.[1];
+
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
@@ -135,7 +138,7 @@ async function upsertInvitedProfile(input: {
     p_membership_scope: input.membershipScope,
   });
 
-  if (isMissingRpc(result.error, "upsert_invited_profile")) {
+  if (isMissingRpc(result.error, "upsert_invited_profile") || isMissingColumn(result.error, "membership_scope")) {
     return upsertInvitedProfileInApp(input.email, input.displayName, input.role, input.membershipScope);
   }
 

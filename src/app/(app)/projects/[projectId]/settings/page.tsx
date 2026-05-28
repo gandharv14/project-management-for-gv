@@ -1,4 +1,5 @@
 import { addProjectMember } from "@/app/actions";
+import { ActionForm } from "@/components/action-form";
 import { AddWorkspaceMemberFormFields } from "@/components/add-workspace-member-form-fields";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -63,14 +64,14 @@ export default async function ProjectSettingsPage({ params }: { params: Promise<
           </div>
 
           {profile.role === "manager" ? (
-            <form action={addProjectMember} className="grid gap-3 lg:grid-cols-[1fr_auto]">
+            <ActionForm action={addProjectMember} className="grid gap-3 lg:grid-cols-[1fr_auto]">
               <AddWorkspaceMemberFormFields
                 members={members}
                 projectId={projectId}
                 selectId="project-member-profile"
                 workspaceMembers={workspaceMembers}
               />
-            </form>
+            </ActionForm>
           ) : null}
         </CardContent>
       </Card>
