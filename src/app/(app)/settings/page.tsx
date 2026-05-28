@@ -1,7 +1,7 @@
 import { addProjectMember, addTeamMember, createProject } from "@/app/actions";
 import { AddWorkspaceMemberFormFields } from "@/components/add-workspace-member-form-fields";
+import { FormSubmitButton } from "@/components/form-submit-button";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -48,7 +48,7 @@ export default async function SettingsPage() {
                 <Textarea id="description" name="description" placeholder="What this project covers" />
               </div>
               <div className="flex items-end">
-                <Button type="submit">Create</Button>
+                <FormSubmitButton pendingLabel="Creating...">Create</FormSubmitButton>
               </div>
             </form>
           </CardContent>
@@ -82,9 +82,9 @@ export default async function SettingsPage() {
                 </Select>
               </div>
               <div className="flex items-end">
-                <Button type="submit" variant="secondary">
+                <FormSubmitButton pendingLabel="Adding..." variant="secondary">
                   Add workspace member
-                </Button>
+                </FormSubmitButton>
               </div>
             </form>
           ) : null}

@@ -2,9 +2,9 @@ import { CalendarClock, CheckCircle2, Repeat, ShieldAlert } from "lucide-react";
 import type React from "react";
 
 import { createBlocker, createRecurringRule, updateTaskStatus } from "@/app/actions";
+import { FormSubmitButton } from "@/components/form-submit-button";
 import { RealtimeRefresh } from "@/components/realtime-refresh";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -110,9 +110,9 @@ export default async function BoardPage({ params }: { params: Promise<{ projectI
               </Field>
             </div>
             <div>
-              <Button type="submit" variant="secondary">
+              <FormSubmitButton pendingLabel="Adding..." variant="secondary">
                 Add recurrence
-              </Button>
+              </FormSubmitButton>
             </div>
           </form>
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
@@ -195,19 +195,19 @@ function TaskCard({ projectId, task }: { projectId: string; task: Task }) {
             </option>
           ))}
         </Select>
-        <Button size="sm" type="submit" variant="secondary">
+        <FormSubmitButton pendingLabel="Moving..." size="sm" variant="secondary">
           Move
-        </Button>
+        </FormSubmitButton>
       </form>
       {task.status === "blocked" ? (
         <form action={updateTaskStatus} className="mt-2">
           <input name="projectId" type="hidden" value={projectId} />
           <input name="taskId" type="hidden" value={task.id} />
           <input name="status" type="hidden" value="in_progress" />
-          <Button className="w-full" size="sm" type="submit" variant="outline">
+          <FormSubmitButton className="w-full" pendingLabel="Confirming..." size="sm" variant="outline">
             <CheckCircle2 className="h-4 w-4" />
             Confirm unblocked
-          </Button>
+          </FormSubmitButton>
         </form>
       ) : (
         <details className="mt-2">
@@ -217,10 +217,10 @@ function TaskCard({ projectId, task }: { projectId: string; task: Task }) {
             <input name="taskId" type="hidden" value={task.id} />
             <Input name="title" placeholder="What is blocking this?" required />
             <Textarea name="description" placeholder="Details" />
-            <Button size="sm" type="submit" variant="destructive">
+            <FormSubmitButton pendingLabel="Raising..." size="sm" variant="destructive">
               <ShieldAlert className="h-4 w-4" />
               Raise
-            </Button>
+            </FormSubmitButton>
           </form>
         </details>
       )}

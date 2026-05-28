@@ -2,9 +2,9 @@ import { differenceInCalendarDays } from "date-fns";
 import type React from "react";
 
 import { createBlocker, updateBlockerStatus } from "@/app/actions";
+import { FormSubmitButton } from "@/components/form-submit-button";
 import { RealtimeRefresh } from "@/components/realtime-refresh";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,9 +76,9 @@ export default async function BlockersPage({ params }: { params: Promise<{ proje
                     <option value="acknowledged">Acknowledged</option>
                     <option value="resolved">Resolved</option>
                   </Select>
-                  <Button type="submit" variant="secondary">
+                  <FormSubmitButton pendingLabel="Saving..." variant="secondary">
                     Update
-                  </Button>
+                  </FormSubmitButton>
                 </form>
               </CardContent>
             </Card>
@@ -126,7 +126,7 @@ export default async function BlockersPage({ params }: { params: Promise<{ proje
               <Field label="Description">
                 <Textarea name="description" />
               </Field>
-              <Button type="submit">Raise blocker</Button>
+              <FormSubmitButton pendingLabel="Raising...">Raise blocker</FormSubmitButton>
             </form>
           </CardContent>
         </Card>

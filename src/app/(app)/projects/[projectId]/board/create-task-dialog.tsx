@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import { Plus } from "lucide-react";
-import { useFormStatus } from "react-dom";
 
 import { createTask } from "@/app/actions";
+import { FormSubmitButton } from "@/components/form-submit-button";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -99,7 +99,7 @@ export function CreateTaskDialog({ projectId, members, columns }: CreateTaskDial
                 Cancel
               </Button>
             </DialogClose>
-            <SubmitButton />
+            <FormSubmitButton pendingLabel="Creating...">Create task</FormSubmitButton>
           </div>
         </form>
       </DialogContent>
@@ -121,15 +121,5 @@ function Field({
       <Label htmlFor={htmlFor}>{label}</Label>
       {children}
     </div>
-  );
-}
-
-function SubmitButton() {
-  const { pending } = useFormStatus();
-
-  return (
-    <Button disabled={pending} type="submit">
-      {pending ? "Creating..." : "Create task"}
-    </Button>
   );
 }

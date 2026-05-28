@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { FormSubmitButton } from "@/components/form-submit-button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import type { Profile, ProjectMember } from "@/lib/types";
@@ -41,9 +41,9 @@ export function AddWorkspaceMemberFormFields({
         </Select>
       </div>
       <div className="flex items-end">
-        <Button type="submit" variant="secondary" disabled={!hasWorkspaceMembers}>
+        <FormSubmitButton disabled={!hasWorkspaceMembers} pendingLabel="Adding..." variant="secondary">
           Add to project
-        </Button>
+        </FormSubmitButton>
       </div>
     </>
   );

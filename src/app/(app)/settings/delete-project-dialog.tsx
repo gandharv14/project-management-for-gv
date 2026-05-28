@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import { Trash2 } from "lucide-react";
-import { useFormStatus } from "react-dom";
 
 import { deleteProject } from "@/app/actions";
+import { FormSubmitButton } from "@/components/form-submit-button";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -70,20 +70,12 @@ export function DeleteProjectDialog({ projectId, projectName }: DeleteProjectDia
                 Cancel
               </Button>
             </DialogClose>
-            <SubmitButton disabled={!canDelete} />
+            <FormSubmitButton disabled={!canDelete} pendingLabel="Deleting..." variant="destructive">
+              Delete project
+            </FormSubmitButton>
           </div>
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function SubmitButton({ disabled }: { disabled: boolean }) {
-  const { pending } = useFormStatus();
-
-  return (
-    <Button disabled={disabled || pending} type="submit" variant="destructive">
-      {pending ? "Deleting..." : "Delete project"}
-    </Button>
   );
 }

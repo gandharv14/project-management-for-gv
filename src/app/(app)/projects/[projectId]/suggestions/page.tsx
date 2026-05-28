@@ -8,9 +8,9 @@ import {
   updateSuggestionStatus,
   voteSuggestion,
 } from "@/app/actions";
+import { FormSubmitButton } from "@/components/form-submit-button";
 import { RealtimeRefresh } from "@/components/realtime-refresh";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -66,10 +66,14 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                   <form action={voteSuggestion}>
                     <input name="projectId" type="hidden" value={projectId} />
                     <input name="suggestionId" type="hidden" value={suggestion.id} />
-                    <Button size="sm" type="submit" variant={suggestion.has_voted ? "secondary" : "outline"}>
+                    <FormSubmitButton
+                      pendingLabel="Upvoting..."
+                      size="sm"
+                      variant={suggestion.has_voted ? "secondary" : "outline"}
+                    >
                       <ThumbsUp className="h-4 w-4" />
                       Upvote
-                    </Button>
+                    </FormSubmitButton>
                   </form>
                   <form action={updateSuggestionStatus} className="flex gap-2">
                     <input name="projectId" type="hidden" value={projectId} />
@@ -80,9 +84,9 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                       <option value="accepted">Accepted</option>
                       <option value="parked">Parked</option>
                     </Select>
-                    <Button size="sm" type="submit" variant="secondary">
+                    <FormSubmitButton pendingLabel="Saving..." size="sm" variant="secondary">
                       Set
-                    </Button>
+                    </FormSubmitButton>
                   </form>
                 </div>
 
@@ -98,7 +102,7 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                         </option>
                       ))}
                     </Select>
-                    <Button type="submit">Promote to task</Button>
+                    <FormSubmitButton pendingLabel="Promoting...">Promote to task</FormSubmitButton>
                   </form>
                 ) : null}
 
@@ -116,10 +120,10 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
                   <input name="projectId" type="hidden" value={projectId} />
                   <input name="suggestionId" type="hidden" value={suggestion.id} />
                   <Input name="body" placeholder="Add a comment" />
-                  <Button type="submit" variant="secondary">
+                  <FormSubmitButton pendingLabel="Commenting..." variant="secondary">
                     <MessageSquare className="h-4 w-4" />
                     Comment
-                  </Button>
+                  </FormSubmitButton>
                 </form>
               </CardContent>
             </Card>
@@ -145,7 +149,7 @@ export default async function SuggestionsPage({ params }: { params: Promise<{ pr
               <Field label="Description">
                 <Textarea name="description" />
               </Field>
-              <Button type="submit">Post idea</Button>
+              <FormSubmitButton pendingLabel="Posting...">Post idea</FormSubmitButton>
             </form>
           </CardContent>
         </Card>
