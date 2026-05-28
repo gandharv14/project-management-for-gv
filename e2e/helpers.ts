@@ -20,6 +20,12 @@ export const E2E_MEMBER = {
   displayName: "E2E Member",
 } as const;
 
+export const E2E_ADDED_MEMBER = {
+  sub: "pending|added.member.e2e@example.com",
+  email: "added.member.e2e@example.com",
+  displayName: "E2E Added Member",
+} as const;
+
 type SeedProfile = {
   id: string;
   email: string;
@@ -91,6 +97,7 @@ export async function resetE2EData(): Promise<SeedData> {
   const supabase = getE2ESupabase();
 
   await supabase.from("projects").delete().like("name", "E2E%");
+  await supabase.from("profiles").delete().eq("email", E2E_ADDED_MEMBER.email);
   await supabase.from("profiles").delete().in("auth0_sub", [E2E_MANAGER.sub, E2E_MEMBER.sub]);
 
   const [manager, member] = await Promise.all([

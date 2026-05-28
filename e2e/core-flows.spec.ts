@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { getE2ESupabase, loginAs, resetE2EData, todayISO, type SeedData } from "./helpers";
+import { E2E_ADDED_MEMBER, getE2ESupabase, loginAs, resetE2EData, todayISO, type SeedData } from "./helpers";
 
 async function assertWrite(result: { error: { message: string } | null }) {
   if (result.error) {
@@ -41,6 +41,16 @@ test.describe("core product flows", () => {
     );
 
     await loginAs(page, "manager", "/settings");
+    const teamCard = page.locator(".rounded-xl").filter({ hasText: "Team members" }).first();
+    await teamCard.getByLabel("Name", { exact: true }).fill(E2E_ADDED_MEMBER.displayName);
+    await teamCard.getByLabel("Email", { exact: true }).fill(E2E_ADDED_MEMBER.email);
+    await teamCard.getByLabel("Role", { exact: true }).selectOption("manager");
+    await teamCard.getByRole("button", { name: "Add person" }).click();
+
+    const addedMemberRow = teamCard.locator(".rounded-lg").filter({ hasText: E2E_ADDED_MEMBER.email });
+    await expect(addedMemberRow.getByText(E2E_ADDED_MEMBER.displayName)).toBeVisible();
+    await expect(addedMemberRow.getByText("manager", { exact: true })).toBeVisible();
+
     await expect(page.getByRole("link", { name: projectName })).toBeVisible();
 
     const projectCard = page.locator(".rounded-xl").filter({ hasText: projectName }).first();

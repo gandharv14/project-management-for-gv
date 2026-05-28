@@ -1,4 +1,4 @@
-import { addProjectMember, createProject } from "@/app/actions";
+import { addProjectMember, addTeamMember, createProject } from "@/app/actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,16 +6,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { getAppContext, listProjectMembers } from "@/lib/data";
+import { getAppContext, listProfiles, listProjectMembers } from "@/lib/data";
 
 export default async function SettingsPage() {
   const { profile, projects } = await getAppContext();
-  const projectMembers = await Promise.all(
-    projects.map(async (project) => ({
-      project,
-      members: await listProjectMembers(project.id),
-    })),
-  );
+  const [teamMembers, projectMembers] = await Promise.all([
+    listProfiles(),
+    Promise.all(
+      projects.map(async (project) => ({
+        project,
+        members: await listProjectMembers(project.id),
+      })),
+    ),
+  ]);
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6">
@@ -49,6 +52,54 @@ export default async function SettingsPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Team members</CardTitle>
+          <CardDescription>Add people to the workspace and set their app-wide role.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          {profile.role === "manager" ? (
+            <form action={addTeamMember} className="grid gap-3 lg:grid-cols-[1fr_1fr_12rem_auto]">
+              <div className="grid gap-2">
+                <Label htmlFor="team-display-name">Name</Label>
+                <Input id="team-display-name" name="displayName" placeholder="Ada Lovelace" required />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="team-email">Email</Label>
+                <Input id="team-email" name="email" type="email" placeholder="teammate@labelbox.com" required />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="team-role">Role</Label>
+                <Select id="team-role" name="role" defaultValue="member">
+                  <option value="member">Member</option>
+                  <option value="manager">Manager</option>
+                </Select>
+              </div>
+              <div className="flex items-end">
+                <Button type="submit" variant="secondary">
+                  Add person
+                </Button>
+              </div>
+            </form>
+          ) : null}
+
+          <div className="grid gap-2">
+            {teamMembers.map((member) => (
+              <div
+                key={member.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2"
+              >
+                <div>
+                  <p className="font-medium">{member.display_name}</p>
+                  <p className="text-sm text-muted-foreground">{member.email}</p>
+                </div>
+                <Badge variant={member.role === "manager" ? "default" : "secondary"}>{member.role}</Badge>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4">
         {projectMembers.map(({ project, members }) => (

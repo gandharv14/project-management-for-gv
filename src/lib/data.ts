@@ -108,11 +108,24 @@ export async function ensureCurrentProfile() {
   const normalizedEmail = user.email.toLowerCase();
   const managerEmail = process.env.MANAGER_EMAIL?.toLowerCase();
 
-  const { data: existing } = await supabase
+  const { data: existingData, error: existingError } = await supabase
     .from("profiles")
     .select("*")
     .eq("auth0_sub", user.sub)
     .maybeSingle();
+
+  const existing = assertDb<Profile | null>(existingData, existingError);
+  let existingByEmail: Profile | null = null;
+
+  if (!existing) {
+    const { data: existingByEmailData, error: existingByEmailError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("email", normalizedEmail)
+      .maybeSingle();
+
+    existingByEmail = assertDb<Profile | null>(existingByEmailData, existingByEmailError);
+  }
 
   const { data: manager } = await supabase
     .from("profiles")
@@ -121,23 +134,20 @@ export async function ensureCurrentProfile() {
     .limit(1)
     .maybeSingle();
 
-  const role = existing?.role ?? (managerEmail === normalizedEmail || !manager ? "manager" : "member");
-  const displayName = user.name ?? user.nickname ?? normalizedEmail;
+  const profile = existing ?? existingByEmail;
+  const role = profile?.role ?? (managerEmail === normalizedEmail || !manager ? "manager" : "member");
+  const displayName = profile?.display_name ?? user.name ?? user.nickname ?? normalizedEmail;
+  const profileValues = {
+    auth0_sub: user.sub,
+    email: normalizedEmail,
+    display_name: displayName,
+    avatar_url: user.picture ?? null,
+    role,
+  };
 
-  const { data, error } = await supabase
-    .from("profiles")
-    .upsert(
-      {
-        auth0_sub: user.sub,
-        email: normalizedEmail,
-        display_name: displayName,
-        avatar_url: user.picture ?? null,
-        role,
-      },
-      { onConflict: "auth0_sub" },
-    )
-    .select("*")
-    .single();
+  const { data, error } = profile
+    ? await supabase.from("profiles").update(profileValues).eq("id", profile.id).select("*").single()
+    : await supabase.from("profiles").insert(profileValues).select("*").single();
 
   return assertDb<Profile>(data, error);
 }

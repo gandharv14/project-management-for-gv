@@ -8,6 +8,8 @@ import { ensureCurrentProfile, nextRunDate, requireManager, todayISO } from "@/l
 import { getSupabaseAdmin } from "@/lib/supabase";
 import type { BlockerStatus, RecurrenceFrequency, SuggestionStatus, TaskStatus } from "@/lib/types";
 
+const profileRoleSchema = z.enum(["manager", "member"]);
+
 function text(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -81,6 +83,51 @@ export async function createProject(formData: FormData) {
 
   revalidatePath("/settings");
   redirect(`/projects/${data.id}/board`);
+}
+
+export async function addTeamMember(formData: FormData) {
+  await requireManager();
+  const displayName = text(formData, "displayName");
+  const emailValue = text(formData, "email")?.toLowerCase();
+  const role = profileRoleSchema.parse(text(formData, "role") ?? "member");
+
+  if (!displayName || !emailValue) {
+    return;
+  }
+
+  const email = z.string().email().parse(emailValue);
+  const supabase = getSupabaseAdmin();
+  const { data: existingProfile, error: existingError } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(existingError.message);
+  }
+
+  const result = existingProfile
+    ? await supabase
+        .from("profiles")
+        .update({
+          display_name: displayName,
+          role,
+        })
+        .eq("id", existingProfile.id)
+    : await supabase.from("profiles").insert({
+        auth0_sub: `pending|${email}`,
+        email,
+        display_name: displayName,
+        role,
+      });
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/manager");
 }
 
 export async function addProjectMember(formData: FormData) {
