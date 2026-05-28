@@ -41,6 +41,21 @@ export type ProjectMember = {
   profiles?: Profile | null;
 };
 
+export type ProjectUserFlag = {
+  id: string;
+  project_id: string;
+  flagged_by: string | null;
+  email: string;
+  discord_id: string | null;
+  alias_email: string | null;
+  reason: string;
+  task_link: string | null;
+  screenshot_urls: string[];
+  created_at: string;
+  updated_at: string;
+  reporter?: Profile | null;
+};
+
 export type Task = {
   id: string;
   project_id: string;

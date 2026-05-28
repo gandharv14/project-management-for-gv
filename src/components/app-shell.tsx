@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type React from "react";
-import { Bell, LayoutDashboard, Lightbulb, ListChecks, ShieldAlert, Settings } from "lucide-react";
+import { Bell, Flag, LayoutDashboard, Lightbulb, ListChecks, ShieldAlert, Settings } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -113,6 +113,9 @@ export function AppShell({
                 icon={<Lightbulb className="h-4 w-4" />}
               >
                 Suggestions
+              </NavLink>
+              <NavLink href={`/projects/${activeProject.id}/flags`} icon={<Flag className="h-4 w-4" />}>
+                User flags
               </NavLink>
             </nav>
           </>

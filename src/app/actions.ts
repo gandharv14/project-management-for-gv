@@ -27,6 +27,7 @@ const suggestionImageTypes = new Map([
   ["image/gif", "gif"],
 ]);
 const suggestionScreenshotBucket = "suggestion-screenshots";
+const flagScreenshotBucket = "flag-screenshots";
 const maxSuggestionImagesPerSubmit = 4;
 const maxSuggestionImageBytes = 5 * 1024 * 1024;
 
@@ -99,6 +100,32 @@ async function uploadSuggestionScreenshots(input: {
 
       const { data } = supabase.storage.from(suggestionScreenshotBucket).getPublicUrl(objectPath);
       return `![screenshot ${index + 1}](${data.publicUrl})`;
+    }),
+  );
+}
+
+async function uploadFlagScreenshots(input: { projectId: string; flagId: string; files: File[] }) {
+  if (input.files.length === 0) {
+    return [];
+  }
+
+  const supabase = getSupabaseAdmin();
+
+  return Promise.all(
+    input.files.map(async (file) => {
+      const extension = suggestionImageTypes.get(file.type);
+      const objectPath = `${input.projectId}/${input.flagId}/${crypto.randomUUID()}.${extension}`;
+      const { error } = await supabase.storage.from(flagScreenshotBucket).upload(objectPath, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const { data } = supabase.storage.from(flagScreenshotBucket).getPublicUrl(objectPath);
+      return data.publicUrl;
     }),
   );
 }
@@ -346,6 +373,7 @@ function revalidateProjectMembership(projectId: string) {
   revalidatePath("/settings");
   revalidatePath(`/projects/${projectId}/board`);
   revalidatePath(`/projects/${projectId}/blockers`);
+  revalidatePath(`/projects/${projectId}/flags`);
   revalidatePath(`/projects/${projectId}/suggestions`);
   revalidatePath(`/projects/${projectId}/settings`);
 }
@@ -554,6 +582,7 @@ export async function deleteProject(formData: FormData) {
   revalidatePath("/manager");
   revalidatePath(`/projects/${projectId}/board`);
   revalidatePath(`/projects/${projectId}/blockers`);
+  revalidatePath(`/projects/${projectId}/flags`);
   revalidatePath(`/projects/${projectId}/suggestions`);
 }
 
@@ -742,6 +771,51 @@ export async function updateBlockerStatus(formData: FormData) {
   revalidatePath(`/projects/${projectId}/board`);
   revalidatePath(`/projects/${projectId}/blockers`);
   revalidatePath("/manager");
+}
+
+export async function createProjectUserFlag(formData: FormData) {
+  const profile = await ensureCurrentProfile();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const emailValue = text(formData, "email")?.toLowerCase();
+  const reason = text(formData, "reason");
+
+  if (!emailValue || !reason) {
+    return;
+  }
+
+  const email = z.string().email().parse(emailValue);
+  const aliasEmailValue = text(formData, "aliasEmail")?.toLowerCase() ?? null;
+  const aliasEmail = aliasEmailValue ? z.string().email().parse(aliasEmailValue) : null;
+  const taskLinkValue = text(formData, "taskLink") ?? null;
+  const taskLink = taskLinkValue ? z.string().url().parse(taskLinkValue) : null;
+  const screenshotFiles = suggestionScreenshotFiles(formData);
+
+  await requireProjectAccess(profile, projectId);
+
+  const flagId = crypto.randomUUID();
+  const screenshotUrls = await uploadFlagScreenshots({
+    projectId,
+    flagId,
+    files: screenshotFiles,
+  });
+
+  const { error } = await getSupabaseAdmin().from("project_user_flags").insert({
+    id: flagId,
+    project_id: projectId,
+    flagged_by: profile.id,
+    email,
+    discord_id: text(formData, "discordId"),
+    alias_email: aliasEmail,
+    reason,
+    task_link: taskLink,
+    screenshot_urls: screenshotUrls,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidatePath(`/projects/${projectId}/flags`);
 }
 
 export async function createSuggestion(formData: FormData) {

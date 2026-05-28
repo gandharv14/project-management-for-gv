@@ -13,6 +13,7 @@ import type {
   ProfileRole,
   Project,
   ProjectMember,
+  ProjectUserFlag,
   RecurringRule,
   Suggestion,
   SuggestionCategory,
@@ -422,6 +423,16 @@ export async function listBlockers(projectId: string) {
     .order("created_at", { ascending: true });
 
   return assertDb<Blocker[]>(data, error);
+}
+
+export async function listProjectUserFlags(projectId: string) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("project_user_flags")
+    .select("*, reporter:profiles!project_user_flags_flagged_by_fkey(*)")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: false });
+
+  return assertDb<ProjectUserFlag[]>(data, error);
 }
 
 export async function listSuggestions(projectId: string, viewerId: string, category?: SuggestionCategory) {

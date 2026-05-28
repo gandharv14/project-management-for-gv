@@ -226,6 +226,47 @@ test.describe("core product flows", () => {
     });
   });
 
+  test("flags users on a project", async ({ page }) => {
+    const supabase = getE2ESupabase();
+    const flaggedEmail = "flagged.user.e2e@example.com";
+    const reason = "Submitted low-quality work with mismatched task evidence.";
+
+    await loginAs(page, "manager", `/projects/${seed.project.id}/flags`);
+    await expect(page.getByRole("heading", { name: "User flags" })).toBeVisible();
+
+    const flagForm = page.locator("form").filter({ hasText: "Reason for flagging" }).first();
+    await flagForm.locator('input[name="email"]').fill(flaggedEmail);
+    await flagForm.locator('input[name="discordId"]').fill("discord-1234");
+    await flagForm.locator('input[name="aliasEmail"]').fill("alias.flagged.e2e@example.com");
+    await flagForm.locator('input[name="taskLink"]').fill("https://example.com/tasks/flagged-user");
+    await flagForm.locator('textarea[name="reason"]').fill(reason);
+    await flagForm.getByRole("button", { name: "Flag user" }).click();
+
+    await expect(page.getByRole("heading", { name: flaggedEmail })).toBeVisible();
+    await expect(page.getByText(reason)).toBeVisible();
+    await expect(page.getByText("flagged by E2E Manager")).toBeVisible();
+
+    const { data: flag, error } = await supabase
+      .from("project_user_flags")
+      .select("email,discord_id,alias_email,reason,task_link,flagged_by")
+      .eq("project_id", seed.project.id)
+      .eq("email", flaggedEmail)
+      .single();
+
+    if (error || !flag) {
+      throw new Error(error?.message ?? "Project user flag was not created.");
+    }
+
+    expect(flag).toMatchObject({
+      email: flaggedEmail,
+      discord_id: "discord-1234",
+      alias_email: "alias.flagged.e2e@example.com",
+      reason,
+      task_link: "https://example.com/tasks/flagged-user",
+      flagged_by: seed.manager.id,
+    });
+  });
+
   test("handles today, suggestions, recurring duties, and manager reporting", async ({ page, request }) => {
     const supabase = getE2ESupabase();
 
