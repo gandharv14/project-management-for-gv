@@ -19,10 +19,10 @@ test.describe("auth and navigation", () => {
       await page.getByRole("link", { name: "Manager" }).click();
       await expect(page.getByRole("heading", { name: "Manager Dashboard" })).toBeVisible();
 
-      await page.getByRole("link", { name: "Settings" }).click();
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
 
-      await page.getByRole("link", { name: "E2E Seed Project" }).click();
+      await page.getByRole("link", { name: "E2E Seed Project", exact: true }).click();
       await expect(page.getByRole("heading", { name: "E2E Seed Project" })).toBeVisible();
 
       await page.getByRole("link", { name: "Today" }).click();

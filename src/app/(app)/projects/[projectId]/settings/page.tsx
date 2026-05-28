@@ -38,7 +38,7 @@ export default async function ProjectSettingsPage({ params }: { params: Promise<
         <CardContent className="grid gap-4">
           <div className="grid gap-2">
             {members.map((member) => {
-              const membershipScope = member.profiles?.membership_scope ?? "project";
+              const membershipScope = member.profiles?.membership_scope ?? "workspace";
 
               return (
                 <div

@@ -69,6 +69,13 @@ type E2EProfile = {
   id: string;
 };
 
+type SeedProfileInput = {
+  auth0_sub: string;
+  email: string;
+  display_name: string;
+  role: "manager" | "member";
+};
+
 export type SeedData = {
   manager: SeedProfile;
   member: SeedProfile;
@@ -92,6 +99,49 @@ export function getE2ESupabase() {
       autoRefreshToken: false,
     },
   });
+}
+
+function isMissingColumn(error: { message: string } | null, columnName: string) {
+  return Boolean(
+    error?.message.includes(columnName) &&
+      (error.message.includes("does not exist") || error.message.includes("schema cache")),
+  );
+}
+
+let membershipScopeColumnExists: boolean | null = null;
+
+export async function hasMembershipScopeColumn() {
+  if (membershipScopeColumnExists !== null) {
+    return membershipScopeColumnExists;
+  }
+
+  const result = await getE2ESupabase().from("profiles").select("id,membership_scope").limit(1);
+
+  if (isMissingColumn(result.error, "membership_scope")) {
+    membershipScopeColumnExists = false;
+    return false;
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  membershipScopeColumnExists = true;
+  return true;
+}
+
+export async function upsertE2EProfile(input: SeedProfileInput, membershipScope: "workspace" | "project" = "workspace") {
+  const profileInput = (await hasMembershipScopeColumn())
+    ? { ...input, membership_scope: membershipScope }
+    : input;
+
+  return assertData<SeedProfile>(
+    await getE2ESupabase()
+      .from("profiles")
+      .upsert(profileInput, { onConflict: "auth0_sub" })
+      .select("id,email,display_name")
+      .single(),
+  );
 }
 
 export function todayISO(offsetDays = 0) {
@@ -152,38 +202,18 @@ export async function resetE2EData(): Promise<SeedData> {
   const supabase = getE2ESupabase();
 
   const [manager, member] = await Promise.all([
-    assertData<SeedProfile>(
-      await supabase
-        .from("profiles")
-        .upsert(
-          {
-            auth0_sub: E2E_MANAGER.sub,
-            email: E2E_MANAGER.email,
-            display_name: E2E_MANAGER.displayName,
-            role: "manager",
-            membership_scope: "workspace",
-          },
-          { onConflict: "auth0_sub" },
-        )
-        .select("id,email,display_name")
-        .single(),
-    ),
-    assertData<SeedProfile>(
-      await supabase
-        .from("profiles")
-        .upsert(
-          {
-            auth0_sub: E2E_MEMBER.sub,
-            email: E2E_MEMBER.email,
-            display_name: E2E_MEMBER.displayName,
-            role: "member",
-            membership_scope: "workspace",
-          },
-          { onConflict: "auth0_sub" },
-        )
-        .select("id,email,display_name")
-        .single(),
-    ),
+    upsertE2EProfile({
+      auth0_sub: E2E_MANAGER.sub,
+      email: E2E_MANAGER.email,
+      display_name: E2E_MANAGER.displayName,
+      role: "manager",
+    }),
+    upsertE2EProfile({
+      auth0_sub: E2E_MEMBER.sub,
+      email: E2E_MEMBER.email,
+      display_name: E2E_MEMBER.displayName,
+      role: "member",
+    }),
   ]);
 
   const project = await assertData<SeedProject>(

@@ -129,7 +129,7 @@ export default async function SettingsPage() {
             <CardContent className="grid gap-4">
               <div className="flex flex-wrap gap-2">
                 {members.map((member) => {
-                  const membershipScope = member.profiles?.membership_scope ?? "project";
+                  const membershipScope = member.profiles?.membership_scope ?? "workspace";
 
                   return (
                     <Badge key={member.profile_id} variant={membershipScope === "workspace" ? "secondary" : "outline"}>

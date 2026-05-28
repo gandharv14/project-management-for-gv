@@ -28,6 +28,8 @@ type SessionUser = {
   picture?: string;
 };
 
+type ProfileRow = Omit<Profile, "membership_scope"> & { membership_scope?: ProfileMembershipScope };
+
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
@@ -53,6 +55,17 @@ function assertDb<T>(data: T | null, error: { message: string } | null) {
   }
 
   return data as T;
+}
+
+function withDefaultMembershipScope(profile: ProfileRow): Profile {
+  return {
+    ...profile,
+    membership_scope: profile.membership_scope ?? "workspace",
+  };
+}
+
+function withDefaultMembershipScopes(profiles: ProfileRow[]) {
+  return profiles.map(withDefaultMembershipScope);
 }
 
 async function getE2ESessionUser(): Promise<SessionUser | null> {
@@ -145,20 +158,33 @@ async function reconcileProfileInApp(input: {
   }
 
   const profile = existing ?? existingByEmail;
-  const profileValues = {
+  const baseProfileValues = {
     auth0_sub: input.auth0Sub,
     email: input.normalizedEmail,
     display_name: profile?.display_name ?? input.displayName,
     avatar_url: input.avatarUrl,
     role: profile?.role ?? input.role,
+  };
+  const profileValues = {
+    ...baseProfileValues,
     membership_scope: profile?.membership_scope ?? input.membershipScope,
   };
 
-  const { data, error } = profile
+  let result = profile
     ? await supabase.from("profiles").update(profileValues).eq("id", profile.id).select("*").single()
     : await supabase.from("profiles").insert(profileValues).select("*").single();
 
-  return assertDb<Profile>(data, error);
+  if (isMissingColumn(result.error, "membership_scope")) {
+    result = profile
+      ? await supabase.from("profiles").update(baseProfileValues).eq("id", profile.id).select("*").single()
+      : await supabase
+          .from("profiles")
+          .upsert(baseProfileValues, { onConflict: "auth0_sub" })
+          .select("*")
+          .single();
+  }
+
+  return withDefaultMembershipScope(assertDb<ProfileRow>(result.data, result.error));
 }
 
 export async function ensureCurrentProfile() {
@@ -202,7 +228,7 @@ export async function ensureCurrentProfile() {
     });
   }
 
-  return assertDb<Profile>(data, error);
+  return withDefaultMembershipScope(assertDb<ProfileRow>(data, error));
 }
 
 export async function requireManager() {
@@ -221,7 +247,7 @@ export async function listProfiles() {
     .select("*")
     .order("display_name");
 
-  return assertDb<Profile[]>(data, error);
+  return withDefaultMembershipScopes(assertDb<ProfileRow[]>(data, error));
 }
 
 export async function listWorkspaceProfiles() {
@@ -237,18 +263,10 @@ export async function listWorkspaceProfiles() {
       .select("*")
       .order("display_name");
 
-    const legacyProfiles = assertDb<Array<Omit<Profile, "membership_scope"> & { membership_scope?: ProfileMembershipScope }>>(
-      legacyData,
-      legacyError,
-    );
-
-    return legacyProfiles.map((profile) => ({
-      ...profile,
-      membership_scope: profile.membership_scope ?? "workspace",
-    })) as Profile[];
+    return withDefaultMembershipScopes(assertDb<ProfileRow[]>(legacyData, legacyError));
   }
 
-  return assertDb<Profile[]>(data, error);
+  return withDefaultMembershipScopes(assertDb<ProfileRow[]>(data, error));
 }
 
 export async function listProjects(profile: Profile) {

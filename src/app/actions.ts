@@ -28,6 +28,20 @@ function isMissingRpc(error: { message: string } | null, functionName: string) {
   return Boolean(error?.message.includes(`function public.${functionName}`) && error.message.includes("schema cache"));
 }
 
+function isMissingColumn(error: { message: string } | null, columnName: string) {
+  return Boolean(
+    error?.message.includes(columnName) &&
+      (error.message.includes("does not exist") || error.message.includes("schema cache")),
+  );
+}
+
+function withDefaultMembershipScope(profile: Omit<Profile, "membership_scope"> & { membership_scope?: ProfileMembershipScope }) {
+  return {
+    ...profile,
+    membership_scope: profile.membership_scope ?? "workspace",
+  } as Profile;
+}
+
 async function upsertInvitedProfileInApp(
   email: string,
   displayName: string,
@@ -68,11 +82,43 @@ async function upsertInvitedProfileInApp(
         membership_scope: effectiveScope,
       }).select("*").single();
 
+  if (isMissingColumn(result.error, "membership_scope")) {
+    const legacyResult = existingProfile
+      ? await supabase
+          .from("profiles")
+          .update({
+            email,
+            display_name: displayName,
+            role,
+          })
+          .eq("id", existingProfile.id)
+          .select("*")
+          .single()
+      : await supabase
+          .from("profiles")
+          .insert({
+            auth0_sub: `pending|${email}`,
+            email,
+            display_name: displayName,
+            role,
+          })
+          .select("*")
+          .single();
+
+    if (legacyResult.error) {
+      throw new Error(legacyResult.error.message);
+    }
+
+    return withDefaultMembershipScope(legacyResult.data as Omit<Profile, "membership_scope">);
+  }
+
   if (result.error) {
     throw new Error(result.error.message);
   }
 
-  return result.data as Profile;
+  return withDefaultMembershipScope(result.data as Omit<Profile, "membership_scope"> & {
+    membership_scope?: ProfileMembershipScope;
+  });
 }
 
 async function upsertInvitedProfile(input: {
@@ -97,7 +143,9 @@ async function upsertInvitedProfile(input: {
     throw new Error(result.error.message);
   }
 
-  return result.data as Profile;
+  return withDefaultMembershipScope(result.data as Omit<Profile, "membership_scope"> & {
+    membership_scope?: ProfileMembershipScope;
+  });
 }
 
 async function syncWorkspaceMemberships(profileId: string) {
@@ -130,6 +178,31 @@ async function syncProjectWorkspaceMembers(projectId: string) {
     .from("profiles")
     .select("id")
     .eq("membership_scope", "workspace");
+
+  if (isMissingColumn(error, "membership_scope")) {
+    const { data: legacyProfiles, error: legacyError } = await supabase.from("profiles").select("id");
+
+    if (legacyError) {
+      throw new Error(legacyError.message);
+    }
+
+    if (!legacyProfiles?.length) {
+      return;
+    }
+
+    const { error: legacyUpsertError } = await supabase.from("project_members").upsert(
+      legacyProfiles.map((profile) => ({
+        project_id: projectId,
+        profile_id: profile.id as string,
+      })),
+    );
+
+    if (legacyUpsertError) {
+      throw new Error(legacyUpsertError.message);
+    }
+
+    return;
+  }
 
   if (error) {
     throw new Error(error.message);
@@ -276,7 +349,7 @@ export async function addProjectMember(formData: FormData) {
       return;
     }
 
-    if ((selectedProfile as Profile).membership_scope === "workspace") {
+    if (withDefaultMembershipScope(selectedProfile as Omit<Profile, "membership_scope">).membership_scope === "workspace") {
       await syncWorkspaceMemberships(selectedProfileId);
       revalidateProjectMembership(projectId);
       return;
@@ -338,7 +411,16 @@ export async function addProjectMember(formData: FormData) {
       .update({ display_name: displayName, role: "member", membership_scope: "project" })
       .eq("id", projectMemberProfile.id);
 
-    if (updateError) {
+    if (isMissingColumn(updateError, "membership_scope")) {
+      const { error: legacyUpdateError } = await supabase
+        .from("profiles")
+        .update({ display_name: displayName, role: "member" })
+        .eq("id", projectMemberProfile.id);
+
+      if (legacyUpdateError) {
+        throw new Error(legacyUpdateError.message);
+      }
+    } else if (updateError) {
       throw new Error(updateError.message);
     }
   } else {

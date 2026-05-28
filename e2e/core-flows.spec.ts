@@ -6,10 +6,12 @@ import {
   E2E_MEMBER,
   E2E_PROJECT_MEMBER,
   getE2ESupabase,
+  hasMembershipScopeColumn,
   loginAs,
   resetE2EData,
   todayISO,
   type SeedData,
+  upsertE2EProfile,
 } from "./helpers";
 
 async function assertWrite(result: { error: { message: string } | null }) {
@@ -47,24 +49,12 @@ test.describe("core product flows", () => {
       throw new Error(projectError?.message ?? "Project was not created.");
     }
 
-    const { data: projectMemberProfile, error: projectMemberProfileError } = await supabase
-      .from("profiles")
-      .upsert(
-        {
-          auth0_sub: E2E_PROJECT_MEMBER.sub,
-          email: E2E_PROJECT_MEMBER.email,
-          display_name: E2E_PROJECT_MEMBER.displayName,
-          role: "member",
-          membership_scope: "workspace",
-        },
-        { onConflict: "auth0_sub" },
-      )
-      .select("id")
-      .single();
-
-    if (projectMemberProfileError || !projectMemberProfile) {
-      throw new Error(projectMemberProfileError?.message ?? "Project member profile was not created.");
-    }
+    const projectMemberProfile = await upsertE2EProfile({
+      auth0_sub: E2E_PROJECT_MEMBER.sub,
+      email: E2E_PROJECT_MEMBER.email,
+      display_name: E2E_PROJECT_MEMBER.displayName,
+      role: "member",
+    });
 
     await assertWrite(
       await supabase.from("project_members").upsert([
@@ -91,27 +81,28 @@ test.describe("core product flows", () => {
     await expect(addedMemberRow.getByText(E2E_ADDED_MEMBER.displayName)).toBeVisible();
     await expect(addedMemberRow.getByText("manager", { exact: true })).toBeVisible();
 
-    await expect(page.getByRole("link", { name: projectName })).toBeVisible();
+    await expect(page.getByRole("link", { name: projectName, exact: true })).toBeVisible();
 
     const projectCard = page.locator(".rounded-xl").filter({ hasText: projectName }).first();
-    await expect(projectCard.getByText("E2E Member")).toBeVisible();
-    await expect(projectCard.getByText(E2E_ADDED_MEMBER.displayName)).toBeVisible();
+    await expect(projectCard.getByText("E2E Member · workspace", { exact: true })).toBeVisible();
+    await expect(projectCard.getByText(`${E2E_ADDED_MEMBER.displayName} · workspace`, { exact: true })).toBeVisible();
     await projectCard.getByLabel("Add workspace member").selectOption(projectMemberProfile.id);
     await projectCard.getByRole("button", { name: "Add to project" }).click();
-    await expect(projectCard.getByText(E2E_PROJECT_MEMBER.displayName)).toBeVisible();
-    await expect(projectCard.getByText("workspace")).toBeVisible();
+    await expect(projectCard.getByText(`${E2E_PROJECT_MEMBER.displayName} · workspace`, { exact: true })).toBeVisible();
 
     await loginAs(page, "member", "/settings");
-    await expect(page.getByRole("link", { name: projectName })).toBeVisible();
+    await expect(page.getByRole("link", { name: projectName, exact: true })).toBeVisible();
 
     await assertWrite(
       await supabase.from("project_members").delete().eq("profile_id", seed.member.id).neq("project_id", seed.project.id),
     );
-    await assertWrite(await supabase.from("profiles").update({ membership_scope: "project" }).eq("id", seed.member.id));
-    await page.goto(
-      `http://localhost:3100/api/e2e/session?role=member&redirectTo=${encodeURIComponent(`/projects/${project.id}/board`)}`,
-    );
-    await expect(page).toHaveURL(/\/today$/);
+    if (await hasMembershipScopeColumn()) {
+      await assertWrite(await supabase.from("profiles").update({ membership_scope: "project" }).eq("id", seed.member.id));
+      await page.goto(
+        `http://localhost:3100/api/e2e/session?role=member&redirectTo=${encodeURIComponent(`/projects/${project.id}/board`)}`,
+      );
+      await expect(page).toHaveURL(/\/today$/);
+    }
 
     await loginAs(page, "manager", "/settings");
     const deletableProjectCard = page.locator(".rounded-xl").filter({ hasText: projectName }).first();
@@ -120,7 +111,7 @@ test.describe("core product flows", () => {
     await deleteDialog.getByLabel(`Type ${projectName} to confirm`).fill(projectName);
     await deleteDialog.getByRole("button", { name: "Delete project" }).click();
     await expect(deleteDialog).toBeHidden();
-    await expect(page.getByRole("link", { name: projectName })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: projectName, exact: true })).toHaveCount(0);
 
     const { data: deletedProject, error: deletedProjectError } = await supabase
       .from("projects")
