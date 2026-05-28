@@ -9,6 +9,7 @@ import type {
   Blocker,
   Notification,
   Profile,
+  ProfileRole,
   Project,
   ProjectMember,
   RecurringRule,
@@ -25,6 +26,14 @@ type SessionUser = {
   nickname?: string;
   picture?: string;
 };
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function isMissingRpc(error: { message: string } | null, functionName: string) {
+  return Boolean(error?.message.includes(`function public.${functionName}`) && error.message.includes("schema cache"));
+}
 
 function todayISO() {
   return formatISO(new Date(), { representation: "date" });
@@ -97,21 +106,18 @@ export async function getSessionUser() {
   return session.user as SessionUser;
 }
 
-export async function ensureCurrentProfile() {
-  const user = await getSessionUser();
-
-  if (!user?.sub || !user.email) {
-    redirect("/login");
-  }
-
+async function reconcileProfileInApp(input: {
+  auth0Sub: string;
+  normalizedEmail: string;
+  displayName: string;
+  avatarUrl: string | null;
+  role: ProfileRole;
+}) {
   const supabase = getSupabaseAdmin();
-  const normalizedEmail = user.email.toLowerCase();
-  const managerEmail = process.env.MANAGER_EMAIL?.toLowerCase();
-
   const { data: existingData, error: existingError } = await supabase
     .from("profiles")
     .select("*")
-    .eq("auth0_sub", user.sub)
+    .eq("auth0_sub", input.auth0Sub)
     .maybeSingle();
 
   const existing = assertDb<Profile | null>(existingData, existingError);
@@ -121,33 +127,68 @@ export async function ensureCurrentProfile() {
     const { data: existingByEmailData, error: existingByEmailError } = await supabase
       .from("profiles")
       .select("*")
-      .eq("email", normalizedEmail)
+      .ilike("email", input.normalizedEmail)
+      .order("created_at", { ascending: true })
+      .limit(1)
       .maybeSingle();
 
     existingByEmail = assertDb<Profile | null>(existingByEmailData, existingByEmailError);
   }
 
-  const { data: manager } = await supabase
+  const profile = existing ?? existingByEmail;
+  const profileValues = {
+    auth0_sub: input.auth0Sub,
+    email: input.normalizedEmail,
+    display_name: profile?.display_name ?? input.displayName,
+    avatar_url: input.avatarUrl,
+    role: profile?.role ?? input.role,
+  };
+
+  const { data, error } = profile
+    ? await supabase.from("profiles").update(profileValues).eq("id", profile.id).select("*").single()
+    : await supabase.from("profiles").insert(profileValues).select("*").single();
+
+  return assertDb<Profile>(data, error);
+}
+
+export async function ensureCurrentProfile() {
+  const user = await getSessionUser();
+
+  if (!user?.sub || !user.email) {
+    redirect("/login");
+  }
+
+  const supabase = getSupabaseAdmin();
+  const normalizedEmail = normalizeEmail(user.email);
+  const managerEmail = process.env.MANAGER_EMAIL ? normalizeEmail(process.env.MANAGER_EMAIL) : null;
+
+  const { data: managerData, error: managerError } = await supabase
     .from("profiles")
     .select("id")
     .eq("role", "manager")
     .limit(1)
     .maybeSingle();
 
-  const profile = existing ?? existingByEmail;
-  const role = profile?.role ?? (managerEmail === normalizedEmail || !manager ? "manager" : "member");
-  const displayName = profile?.display_name ?? user.name ?? user.nickname ?? normalizedEmail;
-  const profileValues = {
-    auth0_sub: user.sub,
-    email: normalizedEmail,
-    display_name: displayName,
-    avatar_url: user.picture ?? null,
-    role,
-  };
+  const manager = assertDb<{ id: string } | null>(managerData, managerError);
+  const role = managerEmail === normalizedEmail || !manager ? "manager" : "member";
+  const displayName = user.name?.trim() || user.nickname?.trim() || normalizedEmail;
+  const { data, error } = await supabase.rpc("reconcile_profile_identity", {
+    p_auth0_sub: user.sub,
+    p_email: normalizedEmail,
+    p_display_name: displayName,
+    p_avatar_url: user.picture ?? null,
+    p_role: role,
+  });
 
-  const { data, error } = profile
-    ? await supabase.from("profiles").update(profileValues).eq("id", profile.id).select("*").single()
-    : await supabase.from("profiles").insert(profileValues).select("*").single();
+  if (isMissingRpc(error, "reconcile_profile_identity")) {
+    return reconcileProfileInApp({
+      auth0Sub: user.sub,
+      normalizedEmail,
+      displayName,
+      avatarUrl: user.picture ?? null,
+      role,
+    });
+  }
 
   return assertDb<Profile>(data, error);
 }

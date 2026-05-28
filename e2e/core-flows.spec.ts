@@ -1,6 +1,14 @@
 import { expect, test } from "@playwright/test";
 
-import { E2E_ADDED_MEMBER, getE2ESupabase, loginAs, resetE2EData, todayISO, type SeedData } from "./helpers";
+import {
+  E2E_ADDED_MEMBER,
+  E2E_MEMBER,
+  getE2ESupabase,
+  loginAs,
+  resetE2EData,
+  todayISO,
+  type SeedData,
+} from "./helpers";
 
 async function assertWrite(result: { error: { message: string } | null }) {
   if (result.error) {
@@ -45,7 +53,7 @@ test.describe("core product flows", () => {
     await teamCard.getByLabel("Name", { exact: true }).fill(E2E_ADDED_MEMBER.displayName);
     await teamCard.getByLabel("Email", { exact: true }).fill(E2E_ADDED_MEMBER.email);
     await teamCard.getByLabel("Role", { exact: true }).selectOption("manager");
-    await teamCard.getByRole("button", { name: "Add person" }).click();
+    await teamCard.getByRole("button", { name: "Add or update person" }).click();
 
     const addedMemberRow = teamCard.locator(".rounded-lg").filter({ hasText: E2E_ADDED_MEMBER.email });
     await expect(addedMemberRow.getByText(E2E_ADDED_MEMBER.displayName)).toBeVisible();
@@ -116,6 +124,47 @@ test.describe("core product flows", () => {
     await assertWrite(await supabase.from("tasks").update({ status: "in_progress" }).eq("id", task.id));
     await loginAs(page, "manager", "/manager");
     await expect(page.getByRole("cell", { name: "E2E Member" }).first()).toBeVisible();
+  });
+
+  test("links SSO sign-ins to manager-created profiles without duplicates", async ({ page }) => {
+    const supabase = getE2ESupabase();
+
+    await assertWrite(await supabase.from("profiles").delete().eq("auth0_sub", E2E_MEMBER.sub));
+
+    const { data: invitedProfile, error: inviteError } = await supabase
+      .from("profiles")
+      .insert({
+        auth0_sub: `pending|${E2E_MEMBER.email}`,
+        email: E2E_MEMBER.email.toUpperCase(),
+        display_name: "Invited E2E Member",
+        role: "manager",
+      })
+      .select("id")
+      .single();
+
+    if (inviteError || !invitedProfile) {
+      throw new Error(inviteError?.message ?? "Pending profile was not created.");
+    }
+
+    await loginAs(page, "member", "/settings");
+
+    const { data: matchingProfiles, error: matchingError } = await supabase
+      .from("profiles")
+      .select("id,auth0_sub,email,display_name,role")
+      .ilike("email", E2E_MEMBER.email);
+
+    if (matchingError || !matchingProfiles) {
+      throw new Error(matchingError?.message ?? "Profiles were not returned.");
+    }
+
+    expect(matchingProfiles).toHaveLength(1);
+    expect(matchingProfiles[0]).toMatchObject({
+      id: invitedProfile.id,
+      auth0_sub: E2E_MEMBER.sub,
+      email: E2E_MEMBER.email,
+      display_name: "Invited E2E Member",
+      role: "manager",
+    });
   });
 
   test("handles today, suggestions, recurring duties, and manager reporting", async ({ page, request }) => {

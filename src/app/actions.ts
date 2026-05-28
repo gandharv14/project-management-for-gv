@@ -6,13 +6,52 @@ import { z } from "zod";
 
 import { ensureCurrentProfile, nextRunDate, requireManager, todayISO } from "@/lib/data";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import type { BlockerStatus, RecurrenceFrequency, SuggestionStatus, TaskStatus } from "@/lib/types";
+import type { BlockerStatus, ProfileRole, RecurrenceFrequency, SuggestionStatus, TaskStatus } from "@/lib/types";
 
 const profileRoleSchema = z.enum(["manager", "member"]);
 
 function text(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isMissingRpc(error: { message: string } | null, functionName: string) {
+  return Boolean(error?.message.includes(`function public.${functionName}`) && error.message.includes("schema cache"));
+}
+
+async function upsertInvitedProfileInApp(email: string, displayName: string, role: ProfileRole) {
+  const supabase = getSupabaseAdmin();
+  const { data: existingProfile, error: existingError } = await supabase
+    .from("profiles")
+    .select("id")
+    .ilike("email", email)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(existingError.message);
+  }
+
+  const result = existingProfile
+    ? await supabase
+        .from("profiles")
+        .update({
+          email,
+          display_name: displayName,
+          role,
+        })
+        .eq("id", existingProfile.id)
+    : await supabase.from("profiles").insert({
+        auth0_sub: `pending|${email}`,
+        email,
+        display_name: displayName,
+        role,
+      });
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
 }
 
 async function notify(input: {
@@ -97,30 +136,18 @@ export async function addTeamMember(formData: FormData) {
 
   const email = z.string().email().parse(emailValue);
   const supabase = getSupabaseAdmin();
-  const { data: existingProfile, error: existingError } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("email", email)
-    .maybeSingle();
+  const result = await supabase.rpc("upsert_invited_profile", {
+    p_email: email,
+    p_display_name: displayName,
+    p_role: role,
+  });
 
-  if (existingError) {
-    throw new Error(existingError.message);
+  if (isMissingRpc(result.error, "upsert_invited_profile")) {
+    await upsertInvitedProfileInApp(email, displayName, role);
+    revalidatePath("/settings");
+    revalidatePath("/manager");
+    return;
   }
-
-  const result = existingProfile
-    ? await supabase
-        .from("profiles")
-        .update({
-          display_name: displayName,
-          role,
-        })
-        .eq("id", existingProfile.id)
-    : await supabase.from("profiles").insert({
-        auth0_sub: `pending|${email}`,
-        email,
-        display_name: displayName,
-        role,
-      });
 
   if (result.error) {
     throw new Error(result.error.message);

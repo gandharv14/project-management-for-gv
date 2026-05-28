@@ -56,7 +56,10 @@ export default async function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Team members</CardTitle>
-          <CardDescription>Add people to the workspace and set their app-wide role.</CardDescription>
+          <CardDescription>
+            Add or update people by email. If they sign in with Labelbox SSO, the app links them to the same
+            profile.
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           {profile.role === "manager" ? (
@@ -78,7 +81,7 @@ export default async function SettingsPage() {
               </div>
               <div className="flex items-end">
                 <Button type="submit" variant="secondary">
-                  Add person
+                  Add or update person
                 </Button>
               </div>
             </form>

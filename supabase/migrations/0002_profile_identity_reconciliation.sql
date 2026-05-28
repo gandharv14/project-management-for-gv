@@ -1,0 +1,262 @@
+create extension if not exists citext;
+
+create or replace function public.merge_profiles(p_target_id uuid, p_source_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_profile public.profiles%rowtype;
+  source_profile public.profiles%rowtype;
+  merged_auth0_sub text;
+begin
+  if p_target_id = p_source_id then
+    return;
+  end if;
+
+  select * into target_profile from public.profiles where id = p_target_id for update;
+  if not found then
+    raise exception 'Target profile % does not exist', p_target_id;
+  end if;
+
+  select * into source_profile from public.profiles where id = p_source_id for update;
+  if not found then
+    return;
+  end if;
+
+  insert into public.project_members (project_id, profile_id, created_at)
+  select project_id, p_target_id, min(created_at)
+  from public.project_members
+  where profile_id = p_source_id
+  group by project_id
+  on conflict do nothing;
+  delete from public.project_members where profile_id = p_source_id;
+
+  insert into public.suggestion_votes (suggestion_id, profile_id, created_at)
+  select suggestion_id, p_target_id, min(created_at)
+  from public.suggestion_votes
+  where profile_id = p_source_id
+  group by suggestion_id
+  on conflict do nothing;
+  delete from public.suggestion_votes where profile_id = p_source_id;
+
+  update public.projects set created_by = p_target_id where created_by = p_source_id;
+  update public.recurring_rules set assignee_id = p_target_id where assignee_id = p_source_id;
+  update public.recurring_rules set created_by = p_target_id where created_by = p_source_id;
+  update public.tasks set assignee_id = p_target_id where assignee_id = p_source_id;
+  update public.tasks set created_by = p_target_id where created_by = p_source_id;
+  update public.blockers set owner_id = p_target_id where owner_id = p_source_id;
+  update public.blockers set raised_by = p_target_id where raised_by = p_source_id;
+  update public.suggestions set author_id = p_target_id where author_id = p_source_id;
+  update public.suggestion_comments set author_id = p_target_id where author_id = p_source_id;
+  update public.notifications set profile_id = p_target_id where profile_id = p_source_id;
+  update public.notifications set actor_id = p_target_id where actor_id = p_source_id;
+
+  merged_auth0_sub := target_profile.auth0_sub;
+  if target_profile.auth0_sub like 'pending|%' and source_profile.auth0_sub not like 'pending|%' then
+    merged_auth0_sub := source_profile.auth0_sub;
+  end if;
+
+  delete from public.profiles where id = p_source_id;
+
+  update public.profiles
+  set
+    auth0_sub = merged_auth0_sub,
+    email = lower(trim(target_profile.email::text)),
+    role = case
+      when target_profile.role = 'manager' or source_profile.role = 'manager' then 'manager'
+      else target_profile.role
+    end,
+    avatar_url = coalesce(target_profile.avatar_url, source_profile.avatar_url),
+    updated_at = now()
+  where id = p_target_id;
+end;
+$$;
+
+do $$
+declare
+  duplicate_profile record;
+begin
+  for duplicate_profile in
+    with ranked_profiles as (
+      select
+        id,
+        first_value(id) over (
+          partition by lower(trim(email::text))
+          order by (role = 'manager') desc, (auth0_sub not like 'pending|%') desc, created_at asc, id asc
+        ) as target_id,
+        row_number() over (
+          partition by lower(trim(email::text))
+          order by (role = 'manager') desc, (auth0_sub not like 'pending|%') desc, created_at asc, id asc
+        ) as row_number
+      from public.profiles
+    )
+    select target_id, id as source_id
+    from ranked_profiles
+    where row_number > 1
+  loop
+    perform public.merge_profiles(duplicate_profile.target_id, duplicate_profile.source_id);
+  end loop;
+end;
+$$;
+
+update public.profiles
+set email = lower(trim(email::text))
+where email::text <> lower(trim(email::text));
+
+alter table public.profiles
+alter column email type citext using lower(trim(email::text))::citext;
+
+create or replace function public.reconcile_profile_identity(
+  p_auth0_sub text,
+  p_email text,
+  p_display_name text,
+  p_avatar_url text,
+  p_role text
+)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  normalized_auth0_sub text;
+  normalized_email citext;
+  requested_role text;
+  sub_profile public.profiles%rowtype;
+  email_profile public.profiles%rowtype;
+  resolved_profile public.profiles%rowtype;
+begin
+  normalized_auth0_sub := nullif(trim(p_auth0_sub), '');
+  normalized_email := lower(trim(p_email))::citext;
+  requested_role := case when p_role = 'manager' then 'manager' else 'member' end;
+
+  if normalized_auth0_sub is null or normalized_email::text = '' then
+    raise exception 'Auth0 subject and email are required';
+  end if;
+
+  lock table public.profiles in share row exclusive mode;
+
+  select * into sub_profile
+  from public.profiles
+  where auth0_sub = normalized_auth0_sub
+  limit 1
+  for update;
+
+  select * into email_profile
+  from public.profiles
+  where email = normalized_email
+  limit 1
+  for update;
+
+  if sub_profile.id is not null and email_profile.id is not null and sub_profile.id <> email_profile.id then
+    perform public.merge_profiles(email_profile.id, sub_profile.id);
+
+    select * into email_profile
+    from public.profiles
+    where id = email_profile.id
+    for update;
+  end if;
+
+  if email_profile.id is not null then
+    update public.profiles
+    set
+      auth0_sub = normalized_auth0_sub,
+      email = normalized_email,
+      display_name = coalesce(nullif(display_name, ''), nullif(trim(p_display_name), ''), normalized_email::text),
+      avatar_url = coalesce(p_avatar_url, avatar_url)
+    where id = email_profile.id
+    returning * into resolved_profile;
+
+    return resolved_profile;
+  end if;
+
+  if sub_profile.id is not null then
+    update public.profiles
+    set
+      email = normalized_email,
+      display_name = coalesce(nullif(display_name, ''), nullif(trim(p_display_name), ''), normalized_email::text),
+      avatar_url = coalesce(p_avatar_url, avatar_url)
+    where id = sub_profile.id
+    returning * into resolved_profile;
+
+    return resolved_profile;
+  end if;
+
+  insert into public.profiles (auth0_sub, email, display_name, avatar_url, role)
+  values (
+    normalized_auth0_sub,
+    normalized_email,
+    coalesce(nullif(trim(p_display_name), ''), normalized_email::text),
+    p_avatar_url,
+    requested_role
+  )
+  returning * into resolved_profile;
+
+  return resolved_profile;
+end;
+$$;
+
+create or replace function public.upsert_invited_profile(
+  p_email text,
+  p_display_name text,
+  p_role text
+)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  normalized_email citext;
+  requested_role text;
+  existing_profile public.profiles%rowtype;
+  resolved_profile public.profiles%rowtype;
+begin
+  normalized_email := lower(trim(p_email))::citext;
+  requested_role := case when p_role = 'manager' then 'manager' else 'member' end;
+
+  if normalized_email::text = '' then
+    raise exception 'Email is required';
+  end if;
+
+  lock table public.profiles in share row exclusive mode;
+
+  select * into existing_profile
+  from public.profiles
+  where email = normalized_email
+  limit 1
+  for update;
+
+  if existing_profile.id is not null then
+    update public.profiles
+    set
+      email = normalized_email,
+      display_name = coalesce(nullif(trim(p_display_name), ''), display_name),
+      role = requested_role
+    where id = existing_profile.id
+    returning * into resolved_profile;
+
+    return resolved_profile;
+  end if;
+
+  insert into public.profiles (auth0_sub, email, display_name, role)
+  values (
+    'pending|' || normalized_email::text,
+    normalized_email,
+    coalesce(nullif(trim(p_display_name), ''), normalized_email::text),
+    requested_role
+  )
+  returning * into resolved_profile;
+
+  return resolved_profile;
+end;
+$$;
+
+revoke execute on function public.merge_profiles(uuid, uuid) from public;
+revoke execute on function public.reconcile_profile_identity(text, text, text, text, text) from public;
+revoke execute on function public.upsert_invited_profile(text, text, text) from public;
+
+grant execute on function public.reconcile_profile_identity(text, text, text, text, text) to service_role;
+grant execute on function public.upsert_invited_profile(text, text, text) to service_role;
