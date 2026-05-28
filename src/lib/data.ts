@@ -36,6 +36,13 @@ function isMissingRpc(error: { message: string } | null, functionName: string) {
   return Boolean(error?.message.includes(`function public.${functionName}`) && error.message.includes("schema cache"));
 }
 
+function isMissingColumn(error: { message: string } | null, columnName: string) {
+  return Boolean(
+    error?.message.includes(columnName) &&
+      (error.message.includes("does not exist") || error.message.includes("schema cache")),
+  );
+}
+
 function todayISO() {
   return formatISO(new Date(), { representation: "date" });
 }
@@ -223,6 +230,23 @@ export async function listWorkspaceProfiles() {
     .select("*")
     .eq("membership_scope", "workspace")
     .order("display_name");
+
+  if (isMissingColumn(error, "membership_scope")) {
+    const { data: legacyData, error: legacyError } = await getSupabaseAdmin()
+      .from("profiles")
+      .select("*")
+      .order("display_name");
+
+    const legacyProfiles = assertDb<Array<Omit<Profile, "membership_scope"> & { membership_scope?: ProfileMembershipScope }>>(
+      legacyData,
+      legacyError,
+    );
+
+    return legacyProfiles.map((profile) => ({
+      ...profile,
+      membership_scope: profile.membership_scope ?? "workspace",
+    })) as Profile[];
+  }
 
   return assertDb<Profile[]>(data, error);
 }
