@@ -4,11 +4,20 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { ensureCurrentProfile, nextRunDate, requireManager, todayISO } from "@/lib/data";
+import { ensureCurrentProfile, nextRunDate, requireManager, requireProjectAccess, todayISO } from "@/lib/data";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import type { BlockerStatus, ProfileRole, RecurrenceFrequency, SuggestionStatus, TaskStatus } from "@/lib/types";
+import type {
+  BlockerStatus,
+  Profile,
+  ProfileMembershipScope,
+  ProfileRole,
+  RecurrenceFrequency,
+  SuggestionStatus,
+  TaskStatus,
+} from "@/lib/types";
 
 const profileRoleSchema = z.enum(["manager", "member"]);
+const profileMembershipScopeSchema = z.enum(["workspace", "project"]);
 
 function text(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -19,8 +28,14 @@ function isMissingRpc(error: { message: string } | null, functionName: string) {
   return Boolean(error?.message.includes(`function public.${functionName}`) && error.message.includes("schema cache"));
 }
 
-async function upsertInvitedProfileInApp(email: string, displayName: string, role: ProfileRole) {
+async function upsertInvitedProfileInApp(
+  email: string,
+  displayName: string,
+  role: ProfileRole,
+  membershipScope: ProfileMembershipScope,
+) {
   const supabase = getSupabaseAdmin();
+  const effectiveScope: ProfileMembershipScope = role === "manager" ? "workspace" : membershipScope;
   const { data: existingProfile, error: existingError } = await supabase
     .from("profiles")
     .select("id")
@@ -40,17 +55,99 @@ async function upsertInvitedProfileInApp(email: string, displayName: string, rol
           email,
           display_name: displayName,
           role,
+          membership_scope: effectiveScope,
         })
         .eq("id", existingProfile.id)
+        .select("*")
+        .single()
     : await supabase.from("profiles").insert({
         auth0_sub: `pending|${email}`,
         email,
         display_name: displayName,
         role,
-      });
+        membership_scope: effectiveScope,
+      }).select("*").single();
 
   if (result.error) {
     throw new Error(result.error.message);
+  }
+
+  return result.data as Profile;
+}
+
+async function upsertInvitedProfile(input: {
+  email: string;
+  displayName: string;
+  role: ProfileRole;
+  membershipScope: ProfileMembershipScope;
+}) {
+  const supabase = getSupabaseAdmin();
+  const result = await supabase.rpc("upsert_invited_profile", {
+    p_email: input.email,
+    p_display_name: input.displayName,
+    p_role: input.role,
+    p_membership_scope: input.membershipScope,
+  });
+
+  if (isMissingRpc(result.error, "upsert_invited_profile")) {
+    return upsertInvitedProfileInApp(input.email, input.displayName, input.role, input.membershipScope);
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return result.data as Profile;
+}
+
+async function syncWorkspaceMemberships(profileId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data: projects, error } = await supabase.from("projects").select("id");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!projects?.length) {
+    return;
+  }
+
+  const { error: upsertError } = await supabase.from("project_members").upsert(
+    projects.map((project) => ({
+      project_id: project.id as string,
+      profile_id: profileId,
+    })),
+  );
+
+  if (upsertError) {
+    throw new Error(upsertError.message);
+  }
+}
+
+async function syncProjectWorkspaceMembers(projectId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data: profiles, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("membership_scope", "workspace");
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!profiles?.length) {
+    return;
+  }
+
+  const { error: upsertError } = await supabase.from("project_members").upsert(
+    profiles.map((profile) => ({
+      project_id: projectId,
+      profile_id: profile.id as string,
+    })),
+  );
+
+  if (upsertError) {
+    throw new Error(upsertError.message);
   }
 }
 
@@ -115,10 +212,7 @@ export async function createProject(formData: FormData) {
     throw new Error(error.message);
   }
 
-  await getSupabaseAdmin().from("project_members").insert({
-    project_id: data.id,
-    profile_id: profile.id,
-  });
+  await syncProjectWorkspaceMembers(data.id);
 
   revalidatePath("/settings");
   redirect(`/projects/${data.id}/board`);
@@ -135,54 +229,98 @@ export async function addTeamMember(formData: FormData) {
   }
 
   const email = z.string().email().parse(emailValue);
-  const supabase = getSupabaseAdmin();
-  const result = await supabase.rpc("upsert_invited_profile", {
-    p_email: email,
-    p_display_name: displayName,
-    p_role: role,
+  const invitedProfile = await upsertInvitedProfile({
+    email,
+    displayName,
+    role,
+    membershipScope: "workspace",
   });
-
-  if (isMissingRpc(result.error, "upsert_invited_profile")) {
-    await upsertInvitedProfileInApp(email, displayName, role);
-    revalidatePath("/settings");
-    revalidatePath("/manager");
-    return;
-  }
-
-  if (result.error) {
-    throw new Error(result.error.message);
-  }
+  await syncWorkspaceMemberships(invitedProfile.id);
 
   revalidatePath("/settings");
   revalidatePath("/manager");
 }
 
 export async function addProjectMember(formData: FormData) {
-  await requireManager();
+  const manager = await requireManager();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const displayName = text(formData, "displayName");
   const email = text(formData, "email")?.toLowerCase();
 
-  if (!email) {
+  await requireProjectAccess(manager, projectId);
+
+  if (!displayName || !email) {
     return;
   }
 
-  const { data: profile } = await getSupabaseAdmin()
+  const supabase = getSupabaseAdmin();
+  const normalizedEmail = z.string().email().parse(email);
+  const { data: existingProfile, error: profileError } = await supabase
     .from("profiles")
-    .select("id")
-    .eq("email", email)
+    .select("*")
+    .eq("email", normalizedEmail)
     .maybeSingle();
 
-  if (!profile) {
+  if (profileError) {
+    throw new Error(profileError.message);
+  }
+
+  let projectMemberProfile = existingProfile as Profile | null;
+
+  if (projectMemberProfile?.membership_scope === "workspace") {
+    await syncWorkspaceMemberships(projectMemberProfile.id);
+    revalidatePath("/settings");
+    revalidatePath(`/projects/${projectId}/board`);
+    revalidatePath(`/projects/${projectId}/settings`);
     return;
   }
 
-  await getSupabaseAdmin().from("project_members").upsert({
+  if (projectMemberProfile) {
+    const { data: existingMemberships, error: membershipError } = await supabase
+      .from("project_members")
+      .select("project_id")
+      .eq("profile_id", projectMemberProfile.id);
+
+    if (membershipError) {
+      throw new Error(membershipError.message);
+    }
+
+    const otherProject = existingMemberships?.find((membership) => membership.project_id !== projectId);
+    if (otherProject) {
+      throw new Error("Project-only members can only belong to one project.");
+    }
+
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({ display_name: displayName, role: "member", membership_scope: "project" })
+      .eq("id", projectMemberProfile.id);
+
+    if (updateError) {
+      throw new Error(updateError.message);
+    }
+  } else {
+    projectMemberProfile = await upsertInvitedProfile({
+      email: normalizedEmail,
+      displayName,
+      role: "member",
+      membershipScope: profileMembershipScopeSchema.parse("project"),
+    });
+  }
+
+  const { error: memberError } = await supabase.from("project_members").upsert({
     project_id: projectId,
-    profile_id: profile.id,
+    profile_id: projectMemberProfile.id,
   });
+
+  if (memberError) {
+    throw new Error(memberError.message);
+  }
 
   revalidatePath("/settings");
   revalidatePath(`/projects/${projectId}/board`);
+  revalidatePath(`/projects/${projectId}/blockers`);
+  revalidatePath(`/projects/${projectId}/suggestions`);
+  revalidatePath(`/projects/${projectId}/settings`);
 }
 
 export async function deleteProject(formData: FormData) {
@@ -229,6 +367,8 @@ export async function createTask(formData: FormData) {
     return;
   }
 
+  await requireProjectAccess(profile, projectId);
+
   const status = (text(formData, "status") ?? "backlog") as TaskStatus;
   const { error } = await getSupabaseAdmin()
     .from("tasks")
@@ -260,12 +400,14 @@ export async function createTask(formData: FormData) {
 }
 
 export async function updateTaskStatus(formData: FormData) {
-  await ensureCurrentProfile();
+  const profile = await ensureCurrentProfile();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
   const taskId = z.string().uuid().parse(text(formData, "taskId"));
   const status = z
     .enum(["backlog", "today", "in_progress", "blocked", "done"])
     .parse(text(formData, "status")) as TaskStatus;
+
+  await requireProjectAccess(profile, projectId);
 
   await getSupabaseAdmin()
     .from("tasks")
@@ -273,7 +415,8 @@ export async function updateTaskStatus(formData: FormData) {
       status,
       completed_at: status === "done" ? new Date().toISOString() : null,
     })
-    .eq("id", taskId);
+    .eq("id", taskId)
+    .eq("project_id", projectId);
 
   revalidatePath(`/projects/${projectId}/board`);
   revalidatePath("/today");
@@ -292,6 +435,8 @@ export async function createRecurringRule(formData: FormData) {
   if (!title) {
     return;
   }
+
+  await requireProjectAccess(profile, projectId);
 
   const interval = Number(text(formData, "intervalDays") ?? "1");
   const weekdays = String(text(formData, "weekdays") ?? "")
@@ -324,6 +469,8 @@ export async function createBlocker(formData: FormData) {
     return;
   }
 
+  await requireProjectAccess(profile, projectId);
+
   const ownerId = text(formData, "ownerId") ?? (await defaultManagerId());
 
   await getSupabaseAdmin().from("blockers").insert({
@@ -336,7 +483,7 @@ export async function createBlocker(formData: FormData) {
   });
 
   if (taskId) {
-    await getSupabaseAdmin().from("tasks").update({ status: "blocked" }).eq("id", taskId);
+    await getSupabaseAdmin().from("tasks").update({ status: "blocked" }).eq("id", taskId).eq("project_id", projectId);
   }
 
   await notify({
@@ -361,10 +508,13 @@ export async function updateBlockerStatus(formData: FormData) {
     .enum(["open", "acknowledged", "resolved"])
     .parse(text(formData, "status")) as BlockerStatus;
 
+  await requireProjectAccess(profile, projectId);
+
   const { data: blocker } = await getSupabaseAdmin()
     .from("blockers")
     .select("title, task:tasks!blockers_task_id_fkey(assignee_id)")
     .eq("id", blockerId)
+    .eq("project_id", projectId)
     .maybeSingle();
 
   await getSupabaseAdmin()
@@ -373,7 +523,8 @@ export async function updateBlockerStatus(formData: FormData) {
       status,
       resolved_at: status === "resolved" ? new Date().toISOString() : null,
     })
-    .eq("id", blockerId);
+    .eq("id", blockerId)
+    .eq("project_id", projectId);
 
   const task = Array.isArray(blocker?.task) ? blocker?.task[0] : blocker?.task;
 
@@ -402,6 +553,8 @@ export async function createSuggestion(formData: FormData) {
     return;
   }
 
+  await requireProjectAccess(profile, projectId);
+
   await getSupabaseAdmin().from("suggestions").insert({
     project_id: projectId,
     title,
@@ -417,7 +570,23 @@ export async function voteSuggestion(formData: FormData) {
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
   const suggestionId = z.string().uuid().parse(text(formData, "suggestionId"));
 
+  await requireProjectAccess(profile, projectId);
   const supabase = getSupabaseAdmin();
+  const { data: suggestion, error: suggestionError } = await supabase
+    .from("suggestions")
+    .select("id")
+    .eq("id", suggestionId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+
+  if (suggestionError) {
+    throw new Error(suggestionError.message);
+  }
+
+  if (!suggestion) {
+    return;
+  }
+
   await supabase.from("suggestion_votes").upsert({
     suggestion_id: suggestionId,
     profile_id: profile.id,
@@ -455,6 +624,22 @@ export async function commentSuggestion(formData: FormData) {
     return;
   }
 
+  await requireProjectAccess(profile, projectId);
+  const { data: suggestion, error: suggestionError } = await getSupabaseAdmin()
+    .from("suggestions")
+    .select("id")
+    .eq("id", suggestionId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+
+  if (suggestionError) {
+    throw new Error(suggestionError.message);
+  }
+
+  if (!suggestion) {
+    return;
+  }
+
   await getSupabaseAdmin().from("suggestion_comments").insert({
     suggestion_id: suggestionId,
     author_id: profile.id,
@@ -466,14 +651,16 @@ export async function commentSuggestion(formData: FormData) {
 }
 
 export async function updateSuggestionStatus(formData: FormData) {
-  await ensureCurrentProfile();
+  const profile = await ensureCurrentProfile();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
   const suggestionId = z.string().uuid().parse(text(formData, "suggestionId"));
   const status = z
     .enum(["open", "under_consideration", "accepted", "parked"])
     .parse(text(formData, "status")) as SuggestionStatus;
 
-  await getSupabaseAdmin().from("suggestions").update({ status }).eq("id", suggestionId);
+  await requireProjectAccess(profile, projectId);
+
+  await getSupabaseAdmin().from("suggestions").update({ status }).eq("id", suggestionId).eq("project_id", projectId);
 
   revalidatePath(`/projects/${projectId}/suggestions`);
   revalidatePath("/manager");
@@ -485,10 +672,13 @@ export async function promoteSuggestionToTask(formData: FormData) {
   const suggestionId = z.string().uuid().parse(text(formData, "suggestionId"));
   const assigneeId = text(formData, "assigneeId");
 
+  await requireProjectAccess(profile, projectId);
+
   const { data: suggestion, error } = await getSupabaseAdmin()
     .from("suggestions")
     .select("title, description")
     .eq("id", suggestionId)
+    .eq("project_id", projectId)
     .single();
 
   if (error) {
@@ -515,7 +705,8 @@ export async function promoteSuggestionToTask(formData: FormData) {
   await getSupabaseAdmin()
     .from("suggestions")
     .update({ status: "accepted", promoted_task_id: task.id })
-    .eq("id", suggestionId);
+    .eq("id", suggestionId)
+    .eq("project_id", projectId);
 
   await notify({
     profileId: assigneeId,

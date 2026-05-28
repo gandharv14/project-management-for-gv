@@ -26,6 +26,29 @@ export const E2E_ADDED_MEMBER = {
   displayName: "E2E Added Member",
 } as const;
 
+export const E2E_PROJECT_MEMBER = {
+  sub: "pending|project.member.e2e@example.com",
+  email: "project.member.e2e@example.com",
+  displayName: "E2E Project Member",
+} as const;
+
+const E2E_PROFILE_AUTH0_SUBS = [
+  E2E_MANAGER.sub,
+  E2E_MEMBER.sub,
+  `pending|${E2E_MANAGER.email}`,
+  `pending|${E2E_MEMBER.email}`,
+  E2E_ADDED_MEMBER.sub,
+  E2E_PROJECT_MEMBER.sub,
+];
+
+const E2E_PROFILE_EMAILS = [
+  E2E_MANAGER.email,
+  E2E_MEMBER.email,
+  E2E_MEMBER.email.toUpperCase(),
+  E2E_ADDED_MEMBER.email,
+  E2E_PROJECT_MEMBER.email,
+];
+
 type SeedProfile = {
   id: string;
   email: string;
@@ -40,6 +63,10 @@ type SeedProject = {
 type SeedTask = {
   id: string;
   title: string;
+};
+
+type E2EProfile = {
+  id: string;
 };
 
 export type SeedData = {
@@ -85,20 +112,44 @@ async function assertData<T>(result: { data: T | null; error: { message: string 
   return result.data;
 }
 
+async function assertRows<T>(result: { data: T[] | null; error: { message: string } | null }) {
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return result.data ?? [];
+}
+
 async function assertWrite(result: { error: { message: string } | null }) {
   if (result.error) {
     throw new Error(result.error.message);
   }
 }
 
-export async function resetE2EData(): Promise<SeedData> {
+export async function cleanupE2EData() {
   rmSync(E2E_ROLE_FILE, { force: true });
 
   const supabase = getE2ESupabase();
 
-  await supabase.from("projects").delete().like("name", "E2E%");
-  await supabase.from("profiles").delete().eq("email", E2E_ADDED_MEMBER.email);
-  await supabase.from("profiles").delete().in("auth0_sub", [E2E_MANAGER.sub, E2E_MEMBER.sub]);
+  const [profilesBySub, profilesByEmail] = await Promise.all([
+    assertRows<E2EProfile>(await supabase.from("profiles").select("id").in("auth0_sub", E2E_PROFILE_AUTH0_SUBS)),
+    assertRows<E2EProfile>(await supabase.from("profiles").select("id").in("email", E2E_PROFILE_EMAILS)),
+  ]);
+  const e2eProfileIds = [...new Set([...profilesBySub, ...profilesByEmail].map((profile) => profile.id))];
+
+  if (e2eProfileIds.length > 0) {
+    await assertWrite(await supabase.from("projects").delete().in("created_by", e2eProfileIds));
+  }
+
+  await assertWrite(await supabase.from("projects").delete().like("name", "E2E%"));
+  await assertWrite(await supabase.from("profiles").delete().in("auth0_sub", E2E_PROFILE_AUTH0_SUBS));
+  await assertWrite(await supabase.from("profiles").delete().in("email", E2E_PROFILE_EMAILS));
+}
+
+export async function resetE2EData(): Promise<SeedData> {
+  await cleanupE2EData();
+
+  const supabase = getE2ESupabase();
 
   const [manager, member] = await Promise.all([
     assertData<SeedProfile>(
@@ -110,6 +161,7 @@ export async function resetE2EData(): Promise<SeedData> {
             email: E2E_MANAGER.email,
             display_name: E2E_MANAGER.displayName,
             role: "manager",
+            membership_scope: "workspace",
           },
           { onConflict: "auth0_sub" },
         )
@@ -125,6 +177,7 @@ export async function resetE2EData(): Promise<SeedData> {
             email: E2E_MEMBER.email,
             display_name: E2E_MEMBER.displayName,
             role: "member",
+            membership_scope: "workspace",
           },
           { onConflict: "auth0_sub" },
         )
@@ -146,7 +199,7 @@ export async function resetE2EData(): Promise<SeedData> {
   );
 
   await assertWrite(
-    await supabase.from("project_members").insert([
+    await supabase.from("project_members").upsert([
       { project_id: project.id, profile_id: manager.id },
       { project_id: project.id, profile_id: member.id },
     ]),

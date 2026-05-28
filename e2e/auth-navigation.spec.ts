@@ -1,10 +1,14 @@
 import { expect, test } from "@playwright/test";
 
-import { loginAs, logout, resetE2EData } from "./helpers";
+import { cleanupE2EData, loginAs, logout, resetE2EData } from "./helpers";
 
 test.describe("auth and navigation", () => {
   test.beforeEach(async () => {
     await resetE2EData();
+  });
+
+  test.afterEach(async () => {
+    await cleanupE2EData();
   });
 
   test("keeps the manager signed in while switching between app pages", async ({ page }) => {

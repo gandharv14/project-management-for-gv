@@ -8,6 +8,7 @@ export type BlockerStatus = (typeof BLOCKER_STATUSES)[number];
 export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number];
 export type RecurrenceFrequency = (typeof RECURRENCE_FREQUENCIES)[number];
 export type ProfileRole = "manager" | "member";
+export type ProfileMembershipScope = "workspace" | "project";
 
 export type Profile = {
   id: string;
@@ -16,6 +17,7 @@ export type Profile = {
   display_name: string;
   avatar_url: string | null;
   role: ProfileRole;
+  membership_scope: ProfileMembershipScope;
   created_at: string;
   updated_at: string;
 };

@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  cleanupE2EData,
   E2E_ADDED_MEMBER,
   E2E_MEMBER,
+  E2E_PROJECT_MEMBER,
   getE2ESupabase,
   loginAs,
   resetE2EData,
@@ -21,6 +23,10 @@ test.describe("core product flows", () => {
 
   test.beforeEach(async () => {
     seed = await resetE2EData();
+  });
+
+  test.afterEach(async () => {
+    await cleanupE2EData();
   });
 
   test("manages projects, members, tasks, and blockers", async ({ page }) => {
@@ -42,18 +48,18 @@ test.describe("core product flows", () => {
     }
 
     await assertWrite(
-      await supabase.from("project_members").insert([
+      await supabase.from("project_members").upsert([
         { project_id: project.id, profile_id: seed.manager.id },
         { project_id: project.id, profile_id: seed.member.id },
       ]),
     );
 
     await loginAs(page, "manager", "/settings");
-    const teamCard = page.locator(".rounded-xl").filter({ hasText: "Team members" }).first();
+    const teamCard = page.locator(".rounded-xl").filter({ hasText: "Workspace members" }).first();
     await teamCard.getByLabel("Name", { exact: true }).fill(E2E_ADDED_MEMBER.displayName);
     await teamCard.getByLabel("Email", { exact: true }).fill(E2E_ADDED_MEMBER.email);
     await teamCard.getByLabel("Role", { exact: true }).selectOption("manager");
-    await teamCard.getByRole("button", { name: "Add or update person" }).click();
+    await teamCard.getByRole("button", { name: "Add workspace member" }).click();
 
     const addedMemberRow = teamCard.locator(".rounded-lg").filter({ hasText: E2E_ADDED_MEMBER.email });
     await expect(addedMemberRow.getByText(E2E_ADDED_MEMBER.displayName)).toBeVisible();
@@ -63,9 +69,24 @@ test.describe("core product flows", () => {
 
     const projectCard = page.locator(".rounded-xl").filter({ hasText: projectName }).first();
     await expect(projectCard.getByText("E2E Member")).toBeVisible();
+    await expect(projectCard.getByText(E2E_ADDED_MEMBER.displayName)).toBeVisible();
+    await projectCard.getByLabel("Project member name").fill(E2E_PROJECT_MEMBER.displayName);
+    await projectCard.getByLabel("Project member email").fill(E2E_PROJECT_MEMBER.email);
+    await projectCard.getByRole("button", { name: "Add to project" }).click();
+    await expect(projectCard.getByText(E2E_PROJECT_MEMBER.displayName)).toBeVisible();
+    await expect(projectCard.getByText("project")).toBeVisible();
 
     await loginAs(page, "member", "/settings");
     await expect(page.getByRole("link", { name: projectName })).toBeVisible();
+
+    await assertWrite(
+      await supabase.from("project_members").delete().eq("profile_id", seed.member.id).neq("project_id", seed.project.id),
+    );
+    await assertWrite(await supabase.from("profiles").update({ membership_scope: "project" }).eq("id", seed.member.id));
+    await page.goto(
+      `http://localhost:3100/api/e2e/session?role=member&redirectTo=${encodeURIComponent(`/projects/${project.id}/board`)}`,
+    );
+    await expect(page).toHaveURL(/\/today$/);
 
     await loginAs(page, "manager", "/settings");
     const deletableProjectCard = page.locator(".rounded-xl").filter({ hasText: projectName }).first();

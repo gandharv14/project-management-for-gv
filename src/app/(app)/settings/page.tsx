@@ -6,13 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { getAppContext, listProfiles, listProjectMembers } from "@/lib/data";
+import { getAppContext, listProjectMembers, listWorkspaceProfiles } from "@/lib/data";
 import { DeleteProjectDialog } from "./delete-project-dialog";
 
 export default async function SettingsPage() {
   const { profile, projects } = await getAppContext();
-  const [teamMembers, projectMembers] = await Promise.all([
-    listProfiles(),
+  const [workspaceMembers, projectMembers] = await Promise.all([
+    listWorkspaceProfiles(),
     Promise.all(
       projects.map(async (project) => ({
         project,
@@ -56,10 +56,10 @@ export default async function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Team members</CardTitle>
+          <CardTitle>Workspace members</CardTitle>
           <CardDescription>
-            Add or update people by email. If they sign in with Labelbox SSO, the app links them to the same
-            profile.
+            Workspace members are automatically part of every project. If they sign in with Labelbox SSO, the app
+            links them to the same profile.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
@@ -82,14 +82,14 @@ export default async function SettingsPage() {
               </div>
               <div className="flex items-end">
                 <Button type="submit" variant="secondary">
-                  Add or update person
+                  Add workspace member
                 </Button>
               </div>
             </form>
           ) : null}
 
           <div className="grid gap-2">
-            {teamMembers.map((member) => (
+            {workspaceMembers.map((member) => (
               <div
                 key={member.id}
                 className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-3 py-2"
@@ -98,7 +98,10 @@ export default async function SettingsPage() {
                   <p className="font-medium">{member.display_name}</p>
                   <p className="text-sm text-muted-foreground">{member.email}</p>
                 </div>
-                <Badge variant={member.role === "manager" ? "default" : "secondary"}>{member.role}</Badge>
+                <div className="flex gap-2">
+                  <Badge variant="outline">workspace</Badge>
+                  <Badge variant={member.role === "manager" ? "default" : "secondary"}>{member.role}</Badge>
+                </div>
               </div>
             ))}
           </div>
@@ -124,28 +127,30 @@ export default async function SettingsPage() {
             </CardHeader>
             <CardContent className="grid gap-4">
               <div className="flex flex-wrap gap-2">
-                {members.map((member) => (
-                  <Badge key={member.profile_id} variant="outline">
-                    {member.profiles?.display_name ?? "Unknown"}
-                  </Badge>
-                ))}
+                {members.map((member) => {
+                  const membershipScope = member.profiles?.membership_scope ?? "project";
+
+                  return (
+                    <Badge key={member.profile_id} variant={membershipScope === "workspace" ? "secondary" : "outline"}>
+                      {member.profiles?.display_name ?? "Unknown"} · {membershipScope}
+                    </Badge>
+                  );
+                })}
               </div>
               {profile.role === "manager" ? (
-                <form action={addProjectMember} className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
+                <form action={addProjectMember} className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
                   <input name="projectId" type="hidden" value={project.id} />
                   <div className="grid gap-2">
-                    <Label htmlFor={`email-${project.id}`}>Add existing user by email</Label>
-                    <Input id={`email-${project.id}`} name="email" type="email" placeholder="teammate@labelbox.com" />
+                    <Label htmlFor={`display-name-${project.id}`}>Project member name</Label>
+                    <Input id={`display-name-${project.id}`} name="displayName" placeholder="Grace Hopper" required />
                   </div>
                   <div className="grid gap-2">
-                    <Label>Role</Label>
-                    <Select disabled defaultValue="member">
-                      <option value="member">Member</option>
-                    </Select>
+                    <Label htmlFor={`email-${project.id}`}>Project member email</Label>
+                    <Input id={`email-${project.id}`} name="email" type="email" placeholder="teammate@labelbox.com" required />
                   </div>
                   <div className="flex items-end">
                     <Button type="submit" variant="secondary">
-                      Add
+                      Add to project
                     </Button>
                   </div>
                 </form>

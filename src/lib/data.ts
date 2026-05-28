@@ -9,6 +9,7 @@ import type {
   Blocker,
   Notification,
   Profile,
+  ProfileMembershipScope,
   ProfileRole,
   Project,
   ProjectMember,
@@ -112,6 +113,7 @@ async function reconcileProfileInApp(input: {
   displayName: string;
   avatarUrl: string | null;
   role: ProfileRole;
+  membershipScope: ProfileMembershipScope;
 }) {
   const supabase = getSupabaseAdmin();
   const { data: existingData, error: existingError } = await supabase
@@ -142,6 +144,7 @@ async function reconcileProfileInApp(input: {
     display_name: profile?.display_name ?? input.displayName,
     avatar_url: input.avatarUrl,
     role: profile?.role ?? input.role,
+    membership_scope: profile?.membership_scope ?? input.membershipScope,
   };
 
   const { data, error } = profile
@@ -171,6 +174,7 @@ export async function ensureCurrentProfile() {
 
   const manager = assertDb<{ id: string } | null>(managerData, managerError);
   const role = managerEmail === normalizedEmail || !manager ? "manager" : "member";
+  const membershipScope: ProfileMembershipScope = role === "manager" ? "workspace" : "project";
   const displayName = user.name?.trim() || user.nickname?.trim() || normalizedEmail;
   const { data, error } = await supabase.rpc("reconcile_profile_identity", {
     p_auth0_sub: user.sub,
@@ -187,6 +191,7 @@ export async function ensureCurrentProfile() {
       displayName,
       avatarUrl: user.picture ?? null,
       role,
+      membershipScope,
     });
   }
 
@@ -212,10 +217,20 @@ export async function listProfiles() {
   return assertDb<Profile[]>(data, error);
 }
 
+export async function listWorkspaceProfiles() {
+  const { data, error } = await getSupabaseAdmin()
+    .from("profiles")
+    .select("*")
+    .eq("membership_scope", "workspace")
+    .order("display_name");
+
+  return assertDb<Profile[]>(data, error);
+}
+
 export async function listProjects(profile: Profile) {
   const supabase = getSupabaseAdmin();
 
-  if (profile.role === "manager") {
+  if (profile.membership_scope === "workspace") {
     const { data, error } = await supabase
       .from("projects")
       .select("*")
@@ -235,7 +250,8 @@ export async function listProjects(profile: Profile) {
   }> | null, error);
   return rows
     .flatMap((row) => (Array.isArray(row.projects) ? row.projects : row.projects ? [row.projects] : []))
-    .filter(Boolean) as Project[];
+    .filter(Boolean)
+    .filter((project) => !project.archived_at) as Project[];
 }
 
 export async function getProject(projectId: string) {
@@ -258,6 +274,50 @@ export async function listProjectMembers(projectId: string) {
   return assertDb<ProjectMember[]>(data, error);
 }
 
+export async function getAccessibleProject(profile: Profile, projectId: string) {
+  const supabase = getSupabaseAdmin();
+
+  if (profile.membership_scope === "workspace") {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("id", projectId)
+      .is("archived_at", null)
+      .maybeSingle();
+
+    return assertDb<Project | null>(data, error);
+  }
+
+  const { data, error } = await supabase
+    .from("project_members")
+    .select("projects(*)")
+    .eq("project_id", projectId)
+    .eq("profile_id", profile.id)
+    .maybeSingle();
+
+  const row = assertDb<{ projects: Project | Project[] | null } | null>(
+    data as unknown as { projects: Project | Project[] | null } | null,
+    error,
+  );
+  const project = Array.isArray(row?.projects) ? row?.projects[0] : row?.projects;
+
+  return project && !project.archived_at ? project : null;
+}
+
+export async function canAccessProject(profile: Profile, projectId: string) {
+  return Boolean(await getAccessibleProject(profile, projectId));
+}
+
+export async function requireProjectAccess(profile: Profile, projectId: string) {
+  const project = await getAccessibleProject(profile, projectId);
+
+  if (!project) {
+    redirect("/today");
+  }
+
+  return project;
+}
+
 export async function listNotifications(profileId: string) {
   const { data, error } = await getSupabaseAdmin()
     .from("notifications")
@@ -277,7 +337,7 @@ export async function getAppContext(projectId?: string) {
   ]);
 
   const activeProject =
-    projectId ? await getProject(projectId) : projects.length > 0 ? projects[0] : null;
+    projectId ? await requireProjectAccess(profile, projectId) : projects.length > 0 ? projects[0] : null;
 
   return {
     profile,

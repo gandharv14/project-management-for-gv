@@ -67,16 +67,26 @@ export function AppShell({
         </div>
         <div className="mt-3 flex flex-col gap-1">
           {projects.map((project) => (
-            <Link
-              key={project.id}
-              className={cn(
-                "rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground",
-                activeProjectId === project.id && "bg-accent text-foreground",
-              )}
-              href={`/projects/${project.id}/board`}
-            >
-              {project.name}
-            </Link>
+            <div key={project.id} className="flex items-center gap-1">
+              <Link
+                className={cn(
+                  "min-w-0 flex-1 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground",
+                  activeProjectId === project.id && "bg-accent text-foreground",
+                )}
+                href={`/projects/${project.id}/board`}
+              >
+                {project.name}
+              </Link>
+              {profile.role === "manager" ? (
+                <Link
+                  aria-label={`${project.name} settings`}
+                  className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  href={`/projects/${project.id}/settings`}
+                >
+                  <Settings className="h-4 w-4" />
+                </Link>
+              ) : null}
+            </div>
           ))}
           {projects.length === 0 ? (
             <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
