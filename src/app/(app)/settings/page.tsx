@@ -1,4 +1,5 @@
 import { addProjectMember, addTeamMember, createProject } from "@/app/actions";
+import { AddWorkspaceMemberFormFields } from "@/components/add-workspace-member-form-fields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -138,21 +139,13 @@ export default async function SettingsPage() {
                 })}
               </div>
               {profile.role === "manager" ? (
-                <form action={addProjectMember} className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
-                  <input name="projectId" type="hidden" value={project.id} />
-                  <div className="grid gap-2">
-                    <Label htmlFor={`display-name-${project.id}`}>Project member name</Label>
-                    <Input id={`display-name-${project.id}`} name="displayName" placeholder="Grace Hopper" required />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor={`email-${project.id}`}>Project member email</Label>
-                    <Input id={`email-${project.id}`} name="email" type="email" placeholder="teammate@labelbox.com" required />
-                  </div>
-                  <div className="flex items-end">
-                    <Button type="submit" variant="secondary">
-                      Add to project
-                    </Button>
-                  </div>
+                <form action={addProjectMember} className="grid gap-3 lg:grid-cols-[1fr_auto]">
+                  <AddWorkspaceMemberFormFields
+                    members={members}
+                    projectId={project.id}
+                    selectId={`profile-${project.id}`}
+                    workspaceMembers={workspaceMembers}
+                  />
                 </form>
               ) : null}
             </CardContent>

@@ -190,6 +190,14 @@ async function defaultManagerId() {
   return data?.id ?? null;
 }
 
+function revalidateProjectMembership(projectId: string) {
+  revalidatePath("/settings");
+  revalidatePath(`/projects/${projectId}/board`);
+  revalidatePath(`/projects/${projectId}/blockers`);
+  revalidatePath(`/projects/${projectId}/suggestions`);
+  revalidatePath(`/projects/${projectId}/settings`);
+}
+
 export async function createProject(formData: FormData) {
   const profile = await requireManager();
   const name = text(formData, "name");
@@ -244,16 +252,53 @@ export async function addTeamMember(formData: FormData) {
 export async function addProjectMember(formData: FormData) {
   const manager = await requireManager();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const profileId = text(formData, "profileId");
   const displayName = text(formData, "displayName");
   const email = text(formData, "email")?.toLowerCase();
 
   await requireProjectAccess(manager, projectId);
 
+  const supabase = getSupabaseAdmin();
+
+  if (profileId) {
+    const selectedProfileId = z.string().uuid().parse(profileId);
+    const { data: selectedProfile, error: selectedProfileError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", selectedProfileId)
+      .maybeSingle();
+
+    if (selectedProfileError) {
+      throw new Error(selectedProfileError.message);
+    }
+
+    if (!selectedProfile) {
+      return;
+    }
+
+    if ((selectedProfile as Profile).membership_scope === "workspace") {
+      await syncWorkspaceMemberships(selectedProfileId);
+      revalidateProjectMembership(projectId);
+      return;
+    }
+
+    const { error: memberError } = await supabase.from("project_members").upsert({
+      project_id: projectId,
+      profile_id: selectedProfileId,
+    });
+
+    if (memberError) {
+      throw new Error(memberError.message);
+    }
+
+    revalidateProjectMembership(projectId);
+    return;
+  }
+
   if (!displayName || !email) {
     return;
   }
 
-  const supabase = getSupabaseAdmin();
   const normalizedEmail = z.string().email().parse(email);
   const { data: existingProfile, error: profileError } = await supabase
     .from("profiles")
@@ -269,9 +314,7 @@ export async function addProjectMember(formData: FormData) {
 
   if (projectMemberProfile?.membership_scope === "workspace") {
     await syncWorkspaceMemberships(projectMemberProfile.id);
-    revalidatePath("/settings");
-    revalidatePath(`/projects/${projectId}/board`);
-    revalidatePath(`/projects/${projectId}/settings`);
+    revalidateProjectMembership(projectId);
     return;
   }
 
@@ -316,11 +359,7 @@ export async function addProjectMember(formData: FormData) {
     throw new Error(memberError.message);
   }
 
-  revalidatePath("/settings");
-  revalidatePath(`/projects/${projectId}/board`);
-  revalidatePath(`/projects/${projectId}/blockers`);
-  revalidatePath(`/projects/${projectId}/suggestions`);
-  revalidatePath(`/projects/${projectId}/settings`);
+  revalidateProjectMembership(projectId);
 }
 
 export async function deleteProject(formData: FormData) {

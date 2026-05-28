@@ -47,11 +47,37 @@ test.describe("core product flows", () => {
       throw new Error(projectError?.message ?? "Project was not created.");
     }
 
+    const { data: projectMemberProfile, error: projectMemberProfileError } = await supabase
+      .from("profiles")
+      .upsert(
+        {
+          auth0_sub: E2E_PROJECT_MEMBER.sub,
+          email: E2E_PROJECT_MEMBER.email,
+          display_name: E2E_PROJECT_MEMBER.displayName,
+          role: "member",
+          membership_scope: "workspace",
+        },
+        { onConflict: "auth0_sub" },
+      )
+      .select("id")
+      .single();
+
+    if (projectMemberProfileError || !projectMemberProfile) {
+      throw new Error(projectMemberProfileError?.message ?? "Project member profile was not created.");
+    }
+
     await assertWrite(
       await supabase.from("project_members").upsert([
         { project_id: project.id, profile_id: seed.manager.id },
         { project_id: project.id, profile_id: seed.member.id },
       ]),
+    );
+    await assertWrite(
+      await supabase
+        .from("project_members")
+        .delete()
+        .eq("project_id", project.id)
+        .eq("profile_id", projectMemberProfile.id),
     );
 
     await loginAs(page, "manager", "/settings");
@@ -70,11 +96,10 @@ test.describe("core product flows", () => {
     const projectCard = page.locator(".rounded-xl").filter({ hasText: projectName }).first();
     await expect(projectCard.getByText("E2E Member")).toBeVisible();
     await expect(projectCard.getByText(E2E_ADDED_MEMBER.displayName)).toBeVisible();
-    await projectCard.getByLabel("Project member name").fill(E2E_PROJECT_MEMBER.displayName);
-    await projectCard.getByLabel("Project member email").fill(E2E_PROJECT_MEMBER.email);
+    await projectCard.getByLabel("Add workspace member").selectOption(projectMemberProfile.id);
     await projectCard.getByRole("button", { name: "Add to project" }).click();
     await expect(projectCard.getByText(E2E_PROJECT_MEMBER.displayName)).toBeVisible();
-    await expect(projectCard.getByText("project")).toBeVisible();
+    await expect(projectCard.getByText("workspace")).toBeVisible();
 
     await loginAs(page, "member", "/settings");
     await expect(page.getByRole("link", { name: projectName })).toBeVisible();

@@ -1,10 +1,8 @@
 import { addProjectMember } from "@/app/actions";
+import { AddWorkspaceMemberFormFields } from "@/components/add-workspace-member-form-fields";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { getAppContext, listProjectMembers } from "@/lib/data";
+import { getAppContext, listProjectMembers, listWorkspaceProfiles } from "@/lib/data";
 
 export default async function ProjectSettingsPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
@@ -14,7 +12,7 @@ export default async function ProjectSettingsPage({ params }: { params: Promise<
     return null;
   }
 
-  const members = await listProjectMembers(projectId);
+  const [members, workspaceMembers] = await Promise.all([listProjectMembers(projectId), listWorkspaceProfiles()]);
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6">
@@ -65,27 +63,13 @@ export default async function ProjectSettingsPage({ params }: { params: Promise<
           </div>
 
           {profile.role === "manager" ? (
-            <form action={addProjectMember} className="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
-              <input name="projectId" type="hidden" value={projectId} />
-              <div className="grid gap-2">
-                <Label htmlFor="project-member-display-name">Project member name</Label>
-                <Input id="project-member-display-name" name="displayName" placeholder="Grace Hopper" required />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="project-member-email">Project member email</Label>
-                <Input
-                  id="project-member-email"
-                  name="email"
-                  type="email"
-                  placeholder="teammate@labelbox.com"
-                  required
-                />
-              </div>
-              <div className="flex items-end">
-                <Button type="submit" variant="secondary">
-                  Add to project
-                </Button>
-              </div>
+            <form action={addProjectMember} className="grid gap-3 lg:grid-cols-[1fr_auto]">
+              <AddWorkspaceMemberFormFields
+                members={members}
+                projectId={projectId}
+                selectId="project-member-profile"
+                workspaceMembers={workspaceMembers}
+              />
             </form>
           ) : null}
         </CardContent>
