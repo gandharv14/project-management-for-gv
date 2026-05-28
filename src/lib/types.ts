@@ -45,7 +45,7 @@ export type ProjectUserFlag = {
   id: string;
   project_id: string;
   flagged_by: string | null;
-  email: string;
+  email: string | null;
   discord_id: string | null;
   alias_email: string | null;
   reason: string;

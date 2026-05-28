@@ -64,19 +64,21 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
         <Card className="h-fit">
           <CardHeader>
             <CardTitle>Flag User</CardTitle>
-            <CardDescription>Record an email, Discord ID, reason, task link, and screenshot evidence.</CardDescription>
+            <CardDescription>
+              Record either an email or alias email, plus Discord ID, reason, task link, and screenshot evidence.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <form action={createProjectUserFlag} className="grid gap-3">
               <input name="projectId" type="hidden" value={projectId} />
               <Field label="Email">
-                <Input name="email" required type="email" />
+                <Input name="email" placeholder="Required if alias email is blank" type="email" />
               </Field>
               <Field label="Discord ID">
                 <Input name="discordId" placeholder="Optional" />
               </Field>
               <Field label="Alias email">
-                <Input name="aliasEmail" placeholder="Optional" type="email" />
+                <Input name="aliasEmail" placeholder="Required if email is blank" type="email" />
               </Field>
               <Field label="Task link">
                 <Input name="taskLink" placeholder="https://..." type="url" />
@@ -104,6 +106,7 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
 
 function FlagCard({ flag }: { flag: ProjectUserFlag }) {
   const reporter = flag.reporter?.display_name ?? flag.reporter?.email ?? "Unknown member";
+  const primaryIdentifier = flag.email ?? flag.alias_email ?? "Unknown flagged user";
 
   return (
     <Card>
@@ -112,9 +115,9 @@ function FlagCard({ flag }: { flag: ProjectUserFlag }) {
           <div className="min-w-0 flex-1">
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <Badge variant="destructive">Flagged</Badge>
-              {flag.alias_email ? <Badge variant="secondary">Alias: {flag.alias_email}</Badge> : null}
+              {flag.email && flag.alias_email ? <Badge variant="secondary">Alias: {flag.alias_email}</Badge> : null}
             </div>
-            <CardTitle className="break-words">{flag.email}</CardTitle>
+            <CardTitle className="break-words">{primaryIdentifier}</CardTitle>
             <CardDescription>
               flagged by {reporter} · {formatDistanceToNow(new Date(flag.created_at), { addSuffix: true })}
             </CardDescription>
@@ -129,7 +132,11 @@ function FlagCard({ flag }: { flag: ProjectUserFlag }) {
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <div className="grid gap-2 text-sm sm:grid-cols-3">
+        <div className="grid gap-2 text-sm sm:grid-cols-4">
+          <div>
+            <p className="text-muted-foreground">Email</p>
+            <p className="break-words">{flag.email ?? "Not provided"}</p>
+          </div>
           <div>
             <p className="text-muted-foreground">Discord ID</p>
             <p className="break-words">{flag.discord_id ?? "Not provided"}</p>

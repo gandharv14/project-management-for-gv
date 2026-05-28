@@ -777,14 +777,14 @@ export async function createProjectUserFlag(formData: FormData) {
   const profile = await ensureCurrentProfile();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
   const emailValue = text(formData, "email")?.toLowerCase();
+  const aliasEmailValue = text(formData, "aliasEmail")?.toLowerCase();
   const reason = text(formData, "reason");
 
-  if (!emailValue || !reason) {
+  if ((!emailValue && !aliasEmailValue) || !reason) {
     return;
   }
 
-  const email = z.string().email().parse(emailValue);
-  const aliasEmailValue = text(formData, "aliasEmail")?.toLowerCase() ?? null;
+  const email = emailValue ? z.string().email().parse(emailValue) : null;
   const aliasEmail = aliasEmailValue ? z.string().email().parse(aliasEmailValue) : null;
   const taskLinkValue = text(formData, "taskLink") ?? null;
   const taskLink = taskLinkValue ? z.string().url().parse(taskLinkValue) : null;
