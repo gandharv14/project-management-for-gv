@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { getAppContext, listProjectUserFlags } from "@/lib/data";
+import { getAppContext, getProjectUserFlagsState } from "@/lib/data";
 import type { ProjectUserFlag } from "@/lib/types";
 
 export default async function FlagsPage({ params }: { params: Promise<{ projectId: string }> }) {
@@ -24,13 +24,13 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
     return null;
   }
 
-  const flags = await listProjectUserFlags(projectId);
+  const { flags, setupRequired } = await getProjectUserFlagsState(projectId);
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
       <RealtimeRefresh tables={["project_user_flags"]} />
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight">User flags</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Flag User</h1>
         <p className="text-muted-foreground">
           Track flagged users for {activeProject.name}, including who submitted each report.
         </p>
@@ -38,10 +38,23 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
 
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
         <div className="grid gap-3">
+          {setupRequired ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Flag User setup required</CardTitle>
+                <CardDescription>
+                  Apply the latest Supabase migration before submitting or viewing project user flags.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                The `project_user_flags` table is not available in the connected database yet.
+              </CardContent>
+            </Card>
+          ) : null}
           {flags.map((flag) => (
             <FlagCard flag={flag} key={flag.id} />
           ))}
-          {flags.length === 0 ? (
+          {flags.length === 0 && !setupRequired ? (
             <Card>
               <CardContent className="p-6 text-sm text-muted-foreground">No users have been flagged yet.</CardContent>
             </Card>
@@ -50,7 +63,7 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
 
         <Card className="h-fit">
           <CardHeader>
-            <CardTitle>Flag user</CardTitle>
+            <CardTitle>Flag User</CardTitle>
             <CardDescription>Record an email, Discord ID, reason, task link, and screenshot evidence.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -78,7 +91,9 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
                 <ImageIcon className="h-3.5 w-3.5" />
                 Up to 4 PNG, JPEG, WebP, or GIF images, 5MB each.
               </p>
-              <FormSubmitButton pendingLabel="Flagging...">Flag user</FormSubmitButton>
+              <FormSubmitButton disabled={setupRequired} pendingLabel="Flagging...">
+                Flag user
+              </FormSubmitButton>
             </form>
           </CardContent>
         </Card>

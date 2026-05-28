@@ -115,7 +115,7 @@ export function AppShell({
                 Suggestions
               </NavLink>
               <NavLink href={`/projects/${activeProject.id}/flags`} icon={<Flag className="h-4 w-4" />}>
-                User flags
+                Flag User
               </NavLink>
             </nav>
           </>

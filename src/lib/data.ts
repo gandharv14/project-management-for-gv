@@ -47,6 +47,13 @@ function isMissingColumn(error: { message: string } | null, columnName: string) 
   );
 }
 
+function isMissingRelation(error: { message: string } | null, relationName: string) {
+  return Boolean(
+    error?.message.includes(relationName) &&
+      (error.message.includes("does not exist") || error.message.includes("schema cache")),
+  );
+}
+
 function todayISO() {
   return formatISO(new Date(), { representation: "date" });
 }
@@ -433,6 +440,26 @@ export async function listProjectUserFlags(projectId: string) {
     .order("created_at", { ascending: false });
 
   return assertDb<ProjectUserFlag[]>(data, error);
+}
+
+export async function getProjectUserFlagsState(projectId: string) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("project_user_flags")
+    .select("*, reporter:profiles!project_user_flags_flagged_by_fkey(*)")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: false });
+
+  if (isMissingRelation(error, "project_user_flags")) {
+    return {
+      flags: [],
+      setupRequired: true,
+    };
+  }
+
+  return {
+    flags: assertDb<ProjectUserFlag[]>(data, error),
+    setupRequired: false,
+  };
 }
 
 export async function listSuggestions(projectId: string, viewerId: string, category?: SuggestionCategory) {

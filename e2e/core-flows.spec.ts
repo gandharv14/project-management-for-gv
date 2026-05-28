@@ -232,7 +232,7 @@ test.describe("core product flows", () => {
     const reason = "Submitted low-quality work with mismatched task evidence.";
 
     await loginAs(page, "manager", `/projects/${seed.project.id}/flags`);
-    await expect(page.getByRole("heading", { name: "User flags" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Flag User" })).toBeVisible();
 
     const flagForm = page.locator("form").filter({ hasText: "Reason for flagging" }).first();
     await flagForm.locator('input[name="email"]').fill(flaggedEmail);
