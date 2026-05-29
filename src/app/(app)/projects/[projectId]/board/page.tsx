@@ -16,6 +16,7 @@ import type { Task, TaskStatus } from "@/lib/types";
 import { formatDate, pluralize } from "@/lib/utils";
 
 import { CreateTaskDialog } from "./create-task-dialog";
+import { DeleteTaskButton } from "./delete-task-button";
 
 const columns: Array<{ id: TaskStatus; label: string }> = [
   { id: "backlog", label: "Backlog" },
@@ -168,16 +169,19 @@ function TaskCard({ projectId, task }: { projectId: string; task: Task }) {
   return (
     <div className="min-w-0 rounded-lg border bg-background p-3 shadow-sm">
       <div className="flex items-start justify-between gap-2">
-        <div>
+        <div className="min-w-0">
           <h3 className="font-medium leading-snug">{task.title}</h3>
           {task.description ? <p className="mt-1 text-sm text-muted-foreground">{task.description}</p> : null}
         </div>
-        {task.recurring_rule_id ? (
-          <Badge variant="outline">
-            <Repeat className="mr-1 h-3 w-3" />
-            recurring
-          </Badge>
-        ) : null}
+        <div className="flex shrink-0 items-center gap-1">
+          {task.recurring_rule_id ? (
+            <Badge variant="outline">
+              <Repeat className="mr-1 h-3 w-3" />
+              recurring
+            </Badge>
+          ) : null}
+          <DeleteTaskButton projectId={projectId} taskId={task.id} taskTitle={task.title} />
+        </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
         <span>{task.assignee?.display_name ?? "Unassigned"}</span>

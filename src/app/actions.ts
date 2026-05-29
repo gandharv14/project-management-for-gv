@@ -652,6 +652,26 @@ export async function updateTaskStatus(formData: FormData) {
   revalidatePath("/manager");
 }
 
+export async function deleteTask(formData: FormData) {
+  const profile = await ensureCurrentProfile();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const taskId = z.string().uuid().parse(text(formData, "taskId"));
+
+  await requireProjectAccess(profile, projectId);
+
+  const { error } = await getSupabaseAdmin().from("tasks").delete().eq("id", taskId).eq("project_id", projectId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidatePath(`/projects/${projectId}/board`);
+  revalidatePath(`/projects/${projectId}/blockers`);
+  revalidatePath(`/projects/${projectId}/suggestions`);
+  revalidatePath("/today");
+  revalidatePath("/manager");
+}
+
 export async function createRecurringRule(formData: FormData) {
   const profile = await ensureCurrentProfile();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
