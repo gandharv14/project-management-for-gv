@@ -32,6 +32,12 @@ export const E2E_PROJECT_MEMBER = {
   displayName: "E2E Project Member",
 } as const;
 
+export const E2E_PROJECT_ONLY_MEMBER = {
+  sub: "pending|project.only.member.e2e@example.com",
+  email: "project.only.member.e2e@example.com",
+  displayName: "E2E Project Only Member",
+} as const;
+
 const E2E_PROFILE_AUTH0_SUBS = [
   E2E_MANAGER.sub,
   E2E_MEMBER.sub,
@@ -39,6 +45,7 @@ const E2E_PROFILE_AUTH0_SUBS = [
   `pending|${E2E_MEMBER.email}`,
   E2E_ADDED_MEMBER.sub,
   E2E_PROJECT_MEMBER.sub,
+  E2E_PROJECT_ONLY_MEMBER.sub,
 ];
 
 const E2E_PROFILE_EMAILS = [
@@ -47,6 +54,7 @@ const E2E_PROFILE_EMAILS = [
   E2E_MEMBER.email.toUpperCase(),
   E2E_ADDED_MEMBER.email,
   E2E_PROJECT_MEMBER.email,
+  E2E_PROJECT_ONLY_MEMBER.email,
 ];
 
 type SeedProfile = {

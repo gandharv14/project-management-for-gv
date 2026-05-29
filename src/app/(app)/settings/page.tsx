@@ -1,6 +1,7 @@
 import { addProjectMember, addTeamMember, createProject } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
 import { AddWorkspaceMemberFormFields } from "@/components/add-workspace-member-form-fields";
+import { DeleteProjectMemberButton, DeleteWorkspaceMemberButton } from "@/components/delete-member-button";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -100,9 +101,13 @@ export default async function SettingsPage() {
                   <p className="font-medium">{member.display_name}</p>
                   <p className="text-sm text-muted-foreground">{member.email}</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {member.id === profile.id ? <Badge variant="secondary">you</Badge> : null}
                   <Badge variant="outline">workspace</Badge>
                   <Badge variant={member.role === "manager" ? "default" : "secondary"}>{member.role}</Badge>
+                  {profile.role === "manager" && member.id !== profile.id ? (
+                    <DeleteWorkspaceMemberButton memberName={member.display_name} profileId={member.id} />
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -131,11 +136,24 @@ export default async function SettingsPage() {
               <div className="flex flex-wrap gap-2">
                 {members.map((member) => {
                   const membershipScope = member.profiles?.membership_scope ?? "workspace";
+                  const memberName = member.profiles?.display_name ?? "Unknown";
 
                   return (
-                    <Badge key={member.profile_id} variant={membershipScope === "workspace" ? "secondary" : "outline"}>
-                      {member.profiles?.display_name ?? "Unknown"} · {membershipScope}
-                    </Badge>
+                    <div
+                      key={member.profile_id}
+                      className="inline-flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs font-medium"
+                    >
+                      <span>{memberName} · {membershipScope}</span>
+                      {profile.role === "manager" && membershipScope === "project" ? (
+                        <DeleteProjectMemberButton
+                          compact
+                          memberName={memberName}
+                          profileId={member.profile_id}
+                          projectId={project.id}
+                          projectName={project.name}
+                        />
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>

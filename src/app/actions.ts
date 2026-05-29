@@ -378,6 +378,54 @@ function revalidateProjectMembership(projectId: string) {
   revalidatePath(`/projects/${projectId}/settings`);
 }
 
+function revalidateMemberChanges(projectIds: string[]) {
+  revalidatePath("/settings");
+  revalidatePath("/today");
+  revalidatePath("/manager");
+
+  for (const projectId of new Set(projectIds)) {
+    revalidateProjectMembership(projectId);
+  }
+}
+
+async function getProfileMembership(profileId: string) {
+  const supabase = getSupabaseAdmin();
+  const result = await supabase.from("profiles").select("id, role, membership_scope").eq("id", profileId).maybeSingle();
+
+  if (isMissingColumn(result.error, "membership_scope")) {
+    const legacyResult = await supabase.from("profiles").select("id, role").eq("id", profileId).maybeSingle();
+
+    if (legacyResult.error) {
+      throw new Error(legacyResult.error.message);
+    }
+
+    if (!legacyResult.data) {
+      return null;
+    }
+
+    return {
+      id: legacyResult.data.id as string,
+      role: legacyResult.data.role as ProfileRole,
+      membership_scope: "workspace" satisfies ProfileMembershipScope,
+    };
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  if (!result.data) {
+    return null;
+  }
+
+  return {
+    id: result.data.id as string,
+    role: result.data.role as ProfileRole,
+    membership_scope: ((result.data as { membership_scope?: ProfileMembershipScope }).membership_scope ??
+      "workspace") satisfies ProfileMembershipScope,
+  };
+}
+
 export async function createProject(formData: FormData) {
   const profile = await requireManager();
   const name = text(formData, "name");
@@ -549,6 +597,65 @@ export async function addProjectMember(formData: FormData) {
   }
 
   revalidateProjectMembership(projectId);
+}
+
+export async function deleteWorkspaceMember(formData: FormData) {
+  const manager = await requireManager();
+  const profileId = z.string().uuid().parse(text(formData, "profileId"));
+
+  if (profileId === manager.id) {
+    return;
+  }
+
+  const targetProfile = await getProfileMembership(profileId);
+
+  if (!targetProfile || targetProfile.membership_scope !== "workspace") {
+    return;
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data: memberships, error: membershipError } = await supabase
+    .from("project_members")
+    .select("project_id")
+    .eq("profile_id", profileId);
+
+  if (membershipError) {
+    throw new Error(membershipError.message);
+  }
+
+  const { error } = await supabase.from("profiles").delete().eq("id", profileId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidateMemberChanges((memberships ?? []).map((membership) => membership.project_id as string));
+}
+
+export async function deleteProjectMember(formData: FormData) {
+  const manager = await requireManager();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const profileId = z.string().uuid().parse(text(formData, "profileId"));
+
+  await requireProjectAccess(manager, projectId);
+
+  const targetProfile = await getProfileMembership(profileId);
+
+  if (!targetProfile || targetProfile.membership_scope === "workspace") {
+    return;
+  }
+
+  const { error } = await getSupabaseAdmin()
+    .from("project_members")
+    .delete()
+    .eq("project_id", projectId)
+    .eq("profile_id", profileId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidateMemberChanges([projectId]);
 }
 
 export async function deleteProject(formData: FormData) {

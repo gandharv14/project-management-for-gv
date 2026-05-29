@@ -1,6 +1,7 @@
 import { addProjectMember } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
 import { AddWorkspaceMemberFormFields } from "@/components/add-workspace-member-form-fields";
+import { DeleteProjectMemberButton } from "@/components/delete-member-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAppContext, listProjectMembers, listWorkspaceProfiles } from "@/lib/data";
@@ -50,13 +51,21 @@ export default async function ProjectSettingsPage({ params }: { params: Promise<
                     <p className="font-medium">{member.profiles?.display_name ?? "Unknown"}</p>
                     <p className="text-sm text-muted-foreground">{member.profiles?.email ?? "No email"}</p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     <Badge variant={membershipScope === "workspace" ? "secondary" : "outline"}>
                       {membershipScope}
                     </Badge>
                     <Badge variant={member.profiles?.role === "manager" ? "default" : "secondary"}>
                       {member.profiles?.role ?? "member"}
                     </Badge>
+                    {profile.role === "manager" && membershipScope === "project" ? (
+                      <DeleteProjectMemberButton
+                        memberName={member.profiles?.display_name ?? "Unknown"}
+                        profileId={member.profile_id}
+                        projectId={projectId}
+                        projectName={activeProject.name}
+                      />
+                    ) : null}
                   </div>
                 </div>
               );

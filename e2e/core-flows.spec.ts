@@ -5,6 +5,7 @@ import {
   E2E_ADDED_MEMBER,
   E2E_MEMBER,
   E2E_PROJECT_MEMBER,
+  E2E_PROJECT_ONLY_MEMBER,
   getE2ESupabase,
   hasMembershipScopeColumn,
   hasSuggestionCategoryColumn,
@@ -50,12 +51,24 @@ test.describe("core product flows", () => {
       throw new Error(projectError?.message ?? "Project was not created.");
     }
 
+    const hasMembershipScopes = await hasMembershipScopeColumn();
     const projectMemberProfile = await upsertE2EProfile({
       auth0_sub: E2E_PROJECT_MEMBER.sub,
       email: E2E_PROJECT_MEMBER.email,
       display_name: E2E_PROJECT_MEMBER.displayName,
       role: "member",
     });
+    const projectOnlyMemberProfile = hasMembershipScopes
+      ? await upsertE2EProfile(
+          {
+            auth0_sub: E2E_PROJECT_ONLY_MEMBER.sub,
+            email: E2E_PROJECT_ONLY_MEMBER.email,
+            display_name: E2E_PROJECT_ONLY_MEMBER.displayName,
+            role: "member",
+          },
+          "project",
+        )
+      : null;
 
     await assertWrite(
       await supabase.from("project_members").upsert([
@@ -70,6 +83,14 @@ test.describe("core product flows", () => {
         .eq("project_id", project.id)
         .eq("profile_id", projectMemberProfile.id),
     );
+    if (projectOnlyMemberProfile) {
+      await assertWrite(
+        await supabase.from("project_members").upsert({
+          project_id: project.id,
+          profile_id: projectOnlyMemberProfile.id,
+        }),
+      );
+    }
 
     await loginAs(page, "manager", "/settings");
     const teamCard = page.locator(".rounded-xl").filter({ hasText: "Workspace members" }).first();
@@ -91,13 +112,57 @@ test.describe("core product flows", () => {
     await projectCard.getByRole("button", { name: "Add to project" }).click();
     await expect(projectCard.getByText(`${E2E_PROJECT_MEMBER.displayName} · workspace`, { exact: true })).toBeVisible();
 
+    if (projectOnlyMemberProfile) {
+      await expect(projectCard.getByText(`${E2E_PROJECT_ONLY_MEMBER.displayName} · project`, { exact: true })).toBeVisible();
+      page.once("dialog", (dialog) => dialog.accept());
+      await projectCard
+        .getByRole("button", {
+          name: `Remove project member ${E2E_PROJECT_ONLY_MEMBER.displayName} from ${projectName}`,
+        })
+        .click();
+      await expect(projectCard.getByText(`${E2E_PROJECT_ONLY_MEMBER.displayName} · project`, { exact: true })).toHaveCount(
+        0,
+      );
+
+      const { data: deletedMembership, error: deletedMembershipError } = await supabase
+        .from("project_members")
+        .select("profile_id")
+        .eq("project_id", project.id)
+        .eq("profile_id", projectOnlyMemberProfile.id)
+        .maybeSingle();
+
+      if (deletedMembershipError) {
+        throw new Error(deletedMembershipError.message);
+      }
+
+      expect(deletedMembership).toBeNull();
+    }
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await addedMemberRow
+      .getByRole("button", { name: `Delete workspace member ${E2E_ADDED_MEMBER.displayName}` })
+      .click();
+    await expect(addedMemberRow).toHaveCount(0);
+
+    const { data: deletedWorkspaceMember, error: deletedWorkspaceMemberError } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("email", E2E_ADDED_MEMBER.email)
+      .maybeSingle();
+
+    if (deletedWorkspaceMemberError) {
+      throw new Error(deletedWorkspaceMemberError.message);
+    }
+
+    expect(deletedWorkspaceMember).toBeNull();
+
     await loginAs(page, "member", "/settings");
     await expect(page.getByRole("link", { name: projectName, exact: true })).toBeVisible();
 
     await assertWrite(
       await supabase.from("project_members").delete().eq("profile_id", seed.member.id).neq("project_id", seed.project.id),
     );
-    if (await hasMembershipScopeColumn()) {
+    if (hasMembershipScopes) {
       await assertWrite(await supabase.from("profiles").update({ membership_scope: "project" }).eq("id", seed.member.id));
       await page.goto(
         `http://localhost:3100/api/e2e/session?role=member&redirectTo=${encodeURIComponent(`/projects/${project.id}/board`)}`,
