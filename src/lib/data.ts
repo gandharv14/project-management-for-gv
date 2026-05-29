@@ -219,7 +219,10 @@ export async function ensureCurrentProfile() {
 
   const manager = assertDb<{ id: string } | null>(managerData, managerError);
   const role = managerEmail === normalizedEmail || !manager ? "manager" : "member";
-  const membershipScope: ProfileMembershipScope = role === "manager" ? "workspace" : "project";
+  // Login self-signups default to the workspace scope so they appear in the
+  // workspace member list and are synced into every project. Project-only
+  // members are created exclusively through the invite flow.
+  const membershipScope: ProfileMembershipScope = "workspace";
   const displayName = user.name?.trim() || user.nickname?.trim() || normalizedEmail;
   const { data, error } = await supabase.rpc("reconcile_profile_identity", {
     p_auth0_sub: user.sub,
