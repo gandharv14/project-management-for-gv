@@ -337,11 +337,14 @@ async function notify(input: {
     | "assignment_created"
     | "blocker_status_changed"
     | "recurring_task_created"
+    | "recurring_task_missed"
     | "suggestion_traction"
     | "suggestion_promoted";
   title: string;
   body?: string | null;
   href?: string | null;
+  taskId?: string | null;
+  blockerId?: string | null;
 }) {
   if (!input.profileId) {
     return;
@@ -354,7 +357,15 @@ async function notify(input: {
     title: input.title,
     body: input.body ?? null,
     href: input.href ?? null,
+    task_id: input.taskId ?? null,
+    blocker_id: input.blockerId ?? null,
   });
+}
+
+async function managerProfileIds() {
+  const { data } = await getSupabaseAdmin().from("profiles").select("id").eq("role", "manager");
+
+  return (data ?? []).map((row) => row.id as string);
 }
 
 async function defaultManagerId() {
@@ -851,14 +862,22 @@ export async function createBlocker(formData: FormData) {
 
   const ownerId = text(formData, "ownerId") ?? (await defaultManagerId());
 
-  await getSupabaseAdmin().from("blockers").insert({
-    project_id: projectId,
-    task_id: taskId,
-    title,
-    description: text(formData, "description"),
-    owner_id: ownerId,
-    raised_by: profile.id,
-  });
+  const { data: blocker, error: blockerError } = await getSupabaseAdmin()
+    .from("blockers")
+    .insert({
+      project_id: projectId,
+      task_id: taskId,
+      title,
+      description: text(formData, "description"),
+      owner_id: ownerId,
+      raised_by: profile.id,
+    })
+    .select("id")
+    .single();
+
+  if (blockerError) {
+    throw new Error(blockerError.message);
+  }
 
   if (taskId) {
     await getSupabaseAdmin().from("tasks").update({ status: "blocked" }).eq("id", taskId).eq("project_id", projectId);
@@ -871,6 +890,8 @@ export async function createBlocker(formData: FormData) {
     title: "New blocker raised",
     body: title,
     href: `/projects/${projectId}/blockers`,
+    taskId: taskId ?? null,
+    blockerId: blocker.id,
   });
 
   revalidatePath(`/projects/${projectId}/board`);
@@ -890,7 +911,7 @@ export async function updateBlockerStatus(formData: FormData) {
 
   const { data: blocker } = await getSupabaseAdmin()
     .from("blockers")
-    .select("title, task:tasks!blockers_task_id_fkey(assignee_id)")
+    .select("title, task:tasks!blockers_task_id_fkey(id, assignee_id)")
     .eq("id", blockerId)
     .eq("project_id", projectId)
     .maybeSingle();
@@ -914,6 +935,8 @@ export async function updateBlockerStatus(formData: FormData) {
       title: "Blocker resolved",
       body: blocker?.title ?? "A blocker was resolved. Confirm before moving the task.",
       href: `/projects/${projectId}/board`,
+      taskId: task?.id ?? null,
+      blockerId,
     });
   }
 
@@ -1207,20 +1230,24 @@ export async function generateRecurringInstances() {
 
   for (const rule of rules ?? []) {
     const dueDate = rule.next_run_on as string;
-    const { error: insertError } = await supabase.from("tasks").upsert(
-      {
-        project_id: rule.project_id,
-        recurring_rule_id: rule.id,
-        title: rule.title,
-        description: rule.description,
-        assignee_id: rule.assignee_id,
-        due_date: dueDate,
-        generated_for_date: dueDate,
-        status: "today",
-        created_by: rule.created_by,
-      },
-      { onConflict: "recurring_rule_id,generated_for_date" },
-    );
+    const { data: instance, error: insertError } = await supabase
+      .from("tasks")
+      .upsert(
+        {
+          project_id: rule.project_id,
+          recurring_rule_id: rule.id,
+          title: rule.title,
+          description: rule.description,
+          assignee_id: rule.assignee_id,
+          due_date: dueDate,
+          generated_for_date: dueDate,
+          status: "today",
+          created_by: rule.created_by,
+        },
+        { onConflict: "recurring_rule_id,generated_for_date" },
+      )
+      .select("id")
+      .single();
 
     if (insertError) {
       throw new Error(insertError.message);
@@ -1233,6 +1260,7 @@ export async function generateRecurringInstances() {
       title: "Recurring duty ready",
       body: rule.title,
       href: `/projects/${rule.project_id}/board`,
+      taskId: instance.id,
     });
 
     await supabase
@@ -1244,4 +1272,51 @@ export async function generateRecurringInstances() {
   revalidatePath("/today");
   revalidatePath("/manager");
   return rules?.length ?? 0;
+}
+
+export async function notifyMissedRecurringDuties() {
+  const supabase = getSupabaseAdmin();
+  const today = todayISO();
+
+  const { data: missed, error } = await supabase
+    .from("tasks")
+    .select("id, title, project_id, assignee_id, generated_for_date")
+    .not("recurring_rule_id", "is", null)
+    .neq("status", "done")
+    .lt("generated_for_date", today)
+    .is("overdue_notified_at", null);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!missed || missed.length === 0) {
+    return 0;
+  }
+
+  const managers = await managerProfileIds();
+
+  for (const task of missed) {
+    const recipientIds = new Set<string>([...managers]);
+    if (task.assignee_id) {
+      recipientIds.add(task.assignee_id);
+    }
+
+    for (const profileId of recipientIds) {
+      await notify({
+        profileId,
+        type: "recurring_task_missed",
+        title: "Recurring duty missed",
+        body: `${task.title} was not completed for ${task.generated_for_date}.`,
+        href: `/projects/${task.project_id}/board`,
+        taskId: task.id,
+      });
+    }
+
+    await supabase.from("tasks").update({ overdue_notified_at: new Date().toISOString() }).eq("id", task.id);
+  }
+
+  revalidatePath("/today");
+  revalidatePath("/manager");
+  return missed.length;
 }

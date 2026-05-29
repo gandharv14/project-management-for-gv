@@ -68,6 +68,7 @@ export type Task = {
   generated_for_date: string | null;
   sort_order: number;
   completed_at: string | null;
+  overdue_notified_at: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -89,6 +90,20 @@ export type RecurringRule = {
   created_at: string;
   updated_at: string;
   assignee?: Profile | null;
+};
+
+export type RecurringOccurrenceStatus = "done" | "missed" | "pending";
+
+export type RecurringOccurrence = {
+  date: string;
+  status: RecurringOccurrenceStatus;
+};
+
+export type RecurringRuleWithHistory = RecurringRule & {
+  history: RecurringOccurrence[];
+  currentInstanceId: string | null;
+  completedCount: number;
+  projectName?: string | null;
 };
 
 export type Blocker = {
@@ -134,19 +149,30 @@ export type SuggestionComment = {
   author?: Profile | null;
 };
 
+export const DISPLAYED_NOTIFICATION_TYPES = [
+  "blocker_status_changed",
+  "recurring_task_created",
+  "recurring_task_missed",
+] as const;
+
+export type NotificationType =
+  | "assignment_created"
+  | "blocker_status_changed"
+  | "recurring_task_created"
+  | "recurring_task_missed"
+  | "suggestion_traction"
+  | "suggestion_promoted";
+
 export type Notification = {
   id: string;
   profile_id: string;
   actor_id: string | null;
-  type:
-    | "assignment_created"
-    | "blocker_status_changed"
-    | "recurring_task_created"
-    | "suggestion_traction"
-    | "suggestion_promoted";
+  type: NotificationType;
   title: string;
   body: string | null;
   href: string | null;
+  task_id: string | null;
+  blocker_id: string | null;
   read_at: string | null;
   created_at: string;
 };

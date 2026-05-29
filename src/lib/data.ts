@@ -5,21 +5,24 @@ import { redirect } from "next/navigation";
 import { auth0 } from "@/lib/auth0";
 import { getE2ERole, isE2EAuthBypassEnabled, isE2ERole } from "@/lib/e2e-session";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import type {
-  Blocker,
-  Notification,
-  Profile,
-  ProfileMembershipScope,
-  ProfileRole,
-  Project,
-  ProjectMember,
-  ProjectUserFlag,
-  RecurringRule,
-  Suggestion,
-  SuggestionCategory,
-  SuggestionComment,
-  Task,
-  TaskStatus,
+import {
+  DISPLAYED_NOTIFICATION_TYPES,
+  type Blocker,
+  type Notification,
+  type Profile,
+  type ProfileMembershipScope,
+  type ProfileRole,
+  type Project,
+  type ProjectMember,
+  type ProjectUserFlag,
+  type RecurringOccurrence,
+  type RecurringRule,
+  type RecurringRuleWithHistory,
+  type Suggestion,
+  type SuggestionCategory,
+  type SuggestionComment,
+  type Task,
+  type TaskStatus,
 } from "@/lib/types";
 
 type SessionUser = {
@@ -374,6 +377,7 @@ export async function listNotifications(profileId: string) {
     .from("notifications")
     .select("*")
     .eq("profile_id", profileId)
+    .in("type", [...DISPLAYED_NOTIFICATION_TYPES])
     .order("created_at", { ascending: false })
     .limit(10);
 
@@ -418,6 +422,66 @@ export async function listRecurringRules(projectId: string) {
     .order("next_run_on", { ascending: true });
 
   return assertDb<RecurringRule[]>(data, error);
+}
+
+type RecurringInstanceRow = {
+  id: string;
+  status: TaskStatus;
+  generated_for_date: string | null;
+  recurring_rule_id: string | null;
+};
+
+const RECURRING_HISTORY_SIZE = 7;
+
+function buildRecurringHistory(instances: RecurringInstanceRow[], ruleId: string, today: string) {
+  const ruleInstances = instances
+    .filter((row) => row.recurring_rule_id === ruleId)
+    .slice(0, RECURRING_HISTORY_SIZE);
+
+  const history: RecurringOccurrence[] = [...ruleInstances].reverse().map((row) => ({
+    date: row.generated_for_date ?? "",
+    status:
+      row.status === "done"
+        ? "done"
+        : row.generated_for_date && row.generated_for_date < today
+          ? "missed"
+          : "pending",
+  }));
+
+  const current = ruleInstances.find(
+    (row) => row.status !== "done" && row.generated_for_date != null && row.generated_for_date <= today,
+  );
+
+  return {
+    history,
+    currentInstanceId: current?.id ?? null,
+    completedCount: history.filter((occurrence) => occurrence.status === "done").length,
+  };
+}
+
+async function fetchRecurringInstances(ruleIds: string[]) {
+  if (ruleIds.length === 0) {
+    return [] as RecurringInstanceRow[];
+  }
+
+  const { data, error } = await getSupabaseAdmin()
+    .from("tasks")
+    .select("id, status, generated_for_date, recurring_rule_id")
+    .in("recurring_rule_id", ruleIds)
+    .order("generated_for_date", { ascending: false });
+
+  return assertDb<RecurringInstanceRow[]>(data, error);
+}
+
+export async function listRecurringRulesWithHistory(projectId: string): Promise<RecurringRuleWithHistory[]> {
+  const rules = await listRecurringRules(projectId);
+  const today = todayISO();
+  const instances = await fetchRecurringInstances(rules.map((rule) => rule.id));
+
+  return rules.map((rule) => ({
+    ...rule,
+    ...buildRecurringHistory(instances, rule.id, today),
+  }));
 }
 
 export async function listBlockers(projectId: string) {
@@ -606,7 +670,7 @@ export async function getManagerDashboard() {
   const today = todayISO();
   const thirtyDaysAgo = formatISO(subDays(new Date(), 30), { representation: "date" });
 
-  const [profilesResult, overdueResult, blockersResult, suggestionsResult, recurringResult] =
+  const [profilesResult, overdueResult, blockersResult, suggestionsResult, recurringResult, recurringRulesResult] =
     await Promise.all([
       supabase.from("profiles").select("*").order("display_name"),
       supabase
@@ -633,12 +697,28 @@ export async function getManagerDashboard() {
         .select("assignee_id,status,generated_for_date")
         .not("recurring_rule_id", "is", null)
         .gte("generated_for_date", thirtyDaysAgo),
+      supabase
+        .from("recurring_rules")
+        .select("*, assignee:profiles!recurring_rules_assignee_id_fkey(*), projects(name)")
+        .eq("is_active", true)
+        .order("title", { ascending: true }),
     ]);
 
   const profiles = assertDb<Profile[]>(profilesResult.data, profilesResult.error);
   const recurringRows = assertDb<
     Array<{ assignee_id: string | null; status: TaskStatus; generated_for_date: string | null }>
   >(recurringResult.data, recurringResult.error);
+
+  const recurringRuleRows = assertDb<Array<RecurringRule & { projects?: { name: string } | null }>>(
+    recurringRulesResult.data,
+    recurringRulesResult.error,
+  );
+  const recurringInstances = await fetchRecurringInstances(recurringRuleRows.map((rule) => rule.id));
+  const recurringDuties: RecurringRuleWithHistory[] = recurringRuleRows.map((rule) => ({
+    ...rule,
+    projectName: rule.projects?.name ?? null,
+    ...buildRecurringHistory(recurringInstances, rule.id, today),
+  }));
 
   const completionByPerson = profiles.map((profile) => {
     const rows = recurringRows.filter((row) => row.assignee_id === profile.id);
@@ -673,6 +753,7 @@ export async function getManagerDashboard() {
       vote_count: suggestion.suggestion_votes?.length ?? 0,
     })),
     completionByPerson,
+    recurringDuties,
   };
 }
 

@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import type { FormEvent } from "react";
-import { CalendarClock, Repeat, Trash2 } from "lucide-react";
+import { CalendarClock, CheckCircle2, Repeat, Trash2 } from "lucide-react";
 
-import { deleteRecurringRule } from "@/app/actions";
+import { deleteRecurringRule, updateTaskStatus } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { Badge } from "@/components/ui/badge";
@@ -18,14 +18,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import type { RecurringRule } from "@/lib/types";
+import type { RecurringOccurrence, RecurringRule, RecurringRuleWithHistory } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
 const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 type RecurringDutyCardProps = {
   projectId: string;
-  rule: RecurringRule;
+  rule: RecurringRuleWithHistory;
 };
 
 function formatSchedule(rule: RecurringRule) {
@@ -57,73 +57,134 @@ export function RecurringDutyCard({ projectId, rule }: RecurringDutyCardProps) {
     }
   }
 
+  const completionLabel = `${rule.completedCount}/${rule.history.length || 0} done`;
+
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <button
-          type="button"
-          className="rounded-lg border bg-background/60 p-3 text-left text-sm transition-colors hover:border-primary/50 hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <div className="font-medium">{rule.title}</div>
-          <div className="text-muted-foreground">
-            {rule.frequency} · next run {formatDate(rule.next_run_on)}
-          </div>
-        </button>
-      </DialogTrigger>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Repeat className="h-4 w-4" />
-            {rule.title}
-          </DialogTitle>
-          <DialogDescription>Details for this recurring duty.</DialogDescription>
-        </DialogHeader>
+    <div className="flex flex-col gap-2 rounded-lg border bg-background/60 p-3">
+      <Dialog>
+        <DialogTrigger asChild>
+          <button
+            type="button"
+            className="rounded-md text-left text-sm transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <div className="font-medium">{rule.title}</div>
+            <div className="text-muted-foreground">
+              {rule.frequency} · next run {formatDate(rule.next_run_on)}
+            </div>
+          </button>
+        </DialogTrigger>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Repeat className="h-4 w-4" />
+              {rule.title}
+            </DialogTitle>
+            <DialogDescription>Details for this recurring duty.</DialogDescription>
+          </DialogHeader>
 
-        <dl className="grid gap-3 text-sm">
-          {rule.description ? (
-            <Detail label="Description">
-              <p className="whitespace-pre-wrap text-foreground">{rule.description}</p>
+          <dl className="grid gap-3 text-sm">
+            {rule.description ? (
+              <Detail label="Description">
+                <p className="whitespace-pre-wrap text-foreground">{rule.description}</p>
+              </Detail>
+            ) : null}
+            <Detail label="Schedule">
+              <span className="text-foreground">{formatSchedule(rule)}</span>
             </Detail>
-          ) : null}
-          <Detail label="Schedule">
-            <span className="text-foreground">{formatSchedule(rule)}</span>
-          </Detail>
-          <Detail label="Next run">
-            <span className="flex items-center gap-1 text-foreground">
-              <CalendarClock className="h-3.5 w-3.5" />
-              {formatDate(rule.next_run_on)}
-            </span>
-          </Detail>
-          <Detail label="Assignee">
-            <span className="text-foreground">{rule.assignee?.display_name ?? "Unassigned"}</span>
-          </Detail>
-          <Detail label="Status">
-            <Badge variant={rule.is_active ? "secondary" : "outline"}>
-              {rule.is_active ? "Active" : "Paused"}
-            </Badge>
-          </Detail>
-          <Detail label="Created">
-            <span className="text-foreground">{formatDate(rule.created_at.slice(0, 10))}</span>
-          </Detail>
-        </dl>
+            <Detail label="Next run">
+              <span className="flex items-center gap-1 text-foreground">
+                <CalendarClock className="h-3.5 w-3.5" />
+                {formatDate(rule.next_run_on)}
+              </span>
+            </Detail>
+            <Detail label="Assignee">
+              <span className="text-foreground">{rule.assignee?.display_name ?? "Unassigned"}</span>
+            </Detail>
+            <Detail label="Status">
+              <Badge variant={rule.is_active ? "secondary" : "outline"}>
+                {rule.is_active ? "Active" : "Paused"}
+              </Badge>
+            </Detail>
+            <Detail label={`Last ${rule.history.length || 7} (${completionLabel})`}>
+              <HistoryStrip history={rule.history} />
+            </Detail>
+            <Detail label="Created">
+              <span className="text-foreground">{formatDate(rule.created_at.slice(0, 10))}</span>
+            </Detail>
+          </dl>
 
-        <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-between">
-          <ActionForm action={deleteRecurringRule} onSubmit={confirmDelete}>
+          <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-between">
+            <ActionForm action={deleteRecurringRule} onSubmit={confirmDelete}>
+              <input name="projectId" type="hidden" value={projectId} />
+              <input name="ruleId" type="hidden" value={rule.id} />
+              <FormSubmitButton pendingLabel="Deleting..." size="sm" variant="destructive">
+                <Trash2 className="h-4 w-4" />
+                Delete duty
+              </FormSubmitButton>
+            </ActionForm>
+            <div className="flex gap-2">
+              {rule.currentInstanceId ? (
+                <ActionForm action={updateTaskStatus}>
+                  <input name="projectId" type="hidden" value={projectId} />
+                  <input name="taskId" type="hidden" value={rule.currentInstanceId} />
+                  <input name="status" type="hidden" value="done" />
+                  <FormSubmitButton pendingLabel="Completing..." size="sm">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Mark done
+                  </FormSubmitButton>
+                </ActionForm>
+              ) : null}
+              <DialogClose asChild>
+                <Button type="button" variant="outline">
+                  Close
+                </Button>
+              </DialogClose>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <div className="flex items-center justify-between gap-2">
+        <HistoryStrip history={rule.history} />
+        {rule.currentInstanceId ? (
+          <ActionForm action={updateTaskStatus}>
             <input name="projectId" type="hidden" value={projectId} />
-            <input name="ruleId" type="hidden" value={rule.id} />
-            <FormSubmitButton pendingLabel="Deleting..." size="sm" variant="destructive">
-              <Trash2 className="h-4 w-4" />
-              Delete duty
+            <input name="taskId" type="hidden" value={rule.currentInstanceId} />
+            <input name="status" type="hidden" value="done" />
+            <FormSubmitButton pendingLabel="..." size="sm" variant="secondary">
+              <CheckCircle2 className="h-4 w-4" />
+              Mark done
             </FormSubmitButton>
           </ActionForm>
-          <DialogClose asChild>
-            <Button type="button" variant="outline">
-              Close
-            </Button>
-          </DialogClose>
-        </div>
-      </DialogContent>
-    </Dialog>
+        ) : (
+          <span className="text-xs text-muted-foreground">Up to date</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const OCCURRENCE_STYLES: Record<RecurringOccurrence["status"], string> = {
+  done: "bg-emerald-500",
+  missed: "bg-destructive",
+  pending: "bg-muted-foreground/40",
+};
+
+function HistoryStrip({ history }: { history: RecurringOccurrence[] }) {
+  if (history.length === 0) {
+    return <span className="text-xs text-muted-foreground">No history yet</span>;
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      {history.map((occurrence, index) => (
+        <span
+          key={`${occurrence.date}-${index}`}
+          title={`${formatDate(occurrence.date)} · ${occurrence.status}`}
+          className={`h-2.5 w-2.5 rounded-full ${OCCURRENCE_STYLES[occurrence.status]}`}
+        />
+      ))}
+    </div>
   );
 }
 

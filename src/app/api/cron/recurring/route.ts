@@ -1,4 +1,4 @@
-import { generateRecurringInstances } from "@/app/actions";
+import { generateRecurringInstances, notifyMissedRecurringDuties } from "@/app/actions";
 
 export async function GET(request: Request) {
   const expectedSecret = process.env.CRON_SECRET;
@@ -9,5 +9,6 @@ export async function GET(request: Request) {
   }
 
   const generated = await generateRecurringInstances();
-  return Response.json({ generated });
+  const missed = await notifyMissedRecurringDuties();
+  return Response.json({ generated, missed });
 }

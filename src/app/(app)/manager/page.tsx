@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getManagerDashboard } from "@/lib/data";
+import type { RecurringOccurrence } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
 export default async function ManagerPage() {
@@ -98,6 +99,56 @@ export default async function ManagerPage() {
         </Card>
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Repeat className="h-4 w-4" />
+            Recurring duty completion (last 7)
+          </CardTitle>
+          <CardDescription>Whether each recurring duty was completed in its last 7 scheduled occurrences.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Duty</TableHead>
+                <TableHead>Assignee</TableHead>
+                <TableHead>Cadence</TableHead>
+                <TableHead>Last 7</TableHead>
+                <TableHead>Done</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {dashboard.recurringDuties.map((duty) => (
+                <TableRow key={duty.id}>
+                  <TableCell>
+                    <div className="font-medium">{duty.title}</div>
+                    {duty.projectName ? (
+                      <div className="text-xs text-muted-foreground">{duty.projectName}</div>
+                    ) : null}
+                  </TableCell>
+                  <TableCell>{duty.assignee?.display_name ?? "Unassigned"}</TableCell>
+                  <TableCell className="capitalize">{duty.frequency}</TableCell>
+                  <TableCell>
+                    <HistoryStrip history={duty.history} />
+                  </TableCell>
+                  <TableCell>
+                    {duty.completedCount}/{duty.history.length}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {dashboard.recurringDuties.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-sm text-muted-foreground">
+                    No active recurring duties.
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
@@ -174,6 +225,30 @@ function Metric({
         <div className="text-muted-foreground [&>svg]:h-5 [&>svg]:w-5">{icon}</div>
       </CardContent>
     </Card>
+  );
+}
+
+const OCCURRENCE_STYLES: Record<RecurringOccurrence["status"], string> = {
+  done: "bg-emerald-500",
+  missed: "bg-destructive",
+  pending: "bg-muted-foreground/40",
+};
+
+function HistoryStrip({ history }: { history: RecurringOccurrence[] }) {
+  if (history.length === 0) {
+    return <span className="text-xs text-muted-foreground">No history</span>;
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      {history.map((occurrence, index) => (
+        <span
+          key={`${occurrence.date}-${index}`}
+          title={`${formatDate(occurrence.date)} · ${occurrence.status}`}
+          className={`h-2.5 w-2.5 rounded-full ${OCCURRENCE_STYLES[occurrence.status]}`}
+        />
+      ))}
+    </div>
   );
 }
 

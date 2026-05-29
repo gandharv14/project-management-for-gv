@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { getAppContext, listProjectMembers, listRecurringRules, listTasks } from "@/lib/data";
+import { getAppContext, listProjectMembers, listRecurringRulesWithHistory, listTasks } from "@/lib/data";
 import type { Task, TaskStatus } from "@/lib/types";
 import { formatDate, pluralize } from "@/lib/utils";
 
@@ -38,7 +38,7 @@ export default async function BoardPage({ params }: { params: Promise<{ projectI
   const [tasks, members, recurringRules] = await Promise.all([
     listTasks(projectId),
     listProjectMembers(projectId),
-    listRecurringRules(projectId),
+    listRecurringRulesWithHistory(projectId),
   ]);
 
   return (
