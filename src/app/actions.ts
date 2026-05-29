@@ -815,6 +815,28 @@ export async function createRecurringRule(formData: FormData) {
   revalidatePath(`/projects/${projectId}/board`);
 }
 
+export async function deleteRecurringRule(formData: FormData) {
+  const profile = await ensureCurrentProfile();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const ruleId = z.string().uuid().parse(text(formData, "ruleId"));
+
+  await requireProjectAccess(profile, projectId);
+
+  const { error } = await getSupabaseAdmin()
+    .from("recurring_rules")
+    .delete()
+    .eq("id", ruleId)
+    .eq("project_id", projectId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidatePath(`/projects/${projectId}/board`);
+  revalidatePath("/today");
+  revalidatePath("/manager");
+}
+
 export async function createBlocker(formData: FormData) {
   const profile = await ensureCurrentProfile();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));

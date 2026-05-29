@@ -17,6 +17,7 @@ import { formatDate, pluralize } from "@/lib/utils";
 
 import { CreateTaskDialog } from "./create-task-dialog";
 import { DeleteTaskButton } from "./delete-task-button";
+import { RecurringDutyCard } from "./recurring-duty-card";
 
 const columns: Array<{ id: TaskStatus; label: string }> = [
   { id: "backlog", label: "Backlog" },
@@ -119,12 +120,7 @@ export default async function BoardPage({ params }: { params: Promise<{ projectI
           </ActionForm>
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {recurringRules.map((rule) => (
-              <div key={rule.id} className="rounded-lg border bg-background/60 p-3 text-sm">
-                <div className="font-medium">{rule.title}</div>
-                <div className="text-muted-foreground">
-                  {rule.frequency} · next run {formatDate(rule.next_run_on)}
-                </div>
-              </div>
+              <RecurringDutyCard key={rule.id} projectId={projectId} rule={rule} />
             ))}
             {recurringRules.length === 0 ? (
               <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
