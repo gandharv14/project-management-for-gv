@@ -102,6 +102,7 @@ export type RecurringOccurrence = {
 export type RecurringRuleWithHistory = RecurringRule & {
   history: RecurringOccurrence[];
   currentInstanceId: string | null;
+  currentPeriodDone: boolean;
   completedCount: number;
   projectName?: string | null;
 };

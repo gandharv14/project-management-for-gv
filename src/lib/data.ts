@@ -373,15 +373,54 @@ export async function requireProjectAccess(profile: Profile, projectId: string) 
 }
 
 export async function listNotifications(profileId: string) {
-  const { data, error } = await getSupabaseAdmin()
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
     .from("notifications")
     .select("*")
     .eq("profile_id", profileId)
     .in("type", [...DISPLAYED_NOTIFICATION_TYPES])
     .order("created_at", { ascending: false })
-    .limit(10);
+    .limit(30);
 
-  return assertDb<Notification[]>(data, error);
+  const rows = assertDb<Notification[]>(data, error);
+
+  const blockerIds = [
+    ...new Set(
+      rows.filter((row) => row.type === "blocker_status_changed" && row.blocker_id).map((row) => row.blocker_id as string),
+    ),
+  ];
+  const taskIds = [
+    ...new Set(
+      rows
+        .filter((row) => row.type !== "blocker_status_changed" && row.task_id)
+        .map((row) => row.task_id as string),
+    ),
+  ];
+
+  const [aliveBlockers, aliveTasks] = await Promise.all([
+    blockerIds.length > 0
+      ? supabase.from("blockers").select("id").in("id", blockerIds)
+      : Promise.resolve({ data: [] as Array<{ id: string }>, error: null }),
+    taskIds.length > 0
+      ? supabase.from("tasks").select("id").in("id", taskIds)
+      : Promise.resolve({ data: [] as Array<{ id: string }>, error: null }),
+  ]);
+
+  const blockerAlive = new Set((aliveBlockers.data ?? []).map((row) => row.id));
+  const taskAlive = new Set((aliveTasks.data ?? []).map((row) => row.id));
+
+  // Validate-on-read: only surface notifications whose linked entity still
+  // exists. This also drops legacy rows that predate entity linkage (where
+  // task_id/blocker_id are null), which are the stale "deleted item" rows.
+  return rows
+    .filter((row) => {
+      if (row.type === "blocker_status_changed") {
+        return Boolean(row.blocker_id) && blockerAlive.has(row.blocker_id as string);
+      }
+
+      return Boolean(row.task_id) && taskAlive.has(row.task_id as string);
+    })
+    .slice(0, 10);
 }
 
 export async function getAppContext(projectId?: string) {
@@ -448,13 +487,17 @@ function buildRecurringHistory(instances: RecurringInstanceRow[], ruleId: string
           : "pending",
   }));
 
-  const current = ruleInstances.find(
+  const pending = ruleInstances.find(
     (row) => row.status !== "done" && row.generated_for_date != null && row.generated_for_date <= today,
+  );
+  const doneRecent = ruleInstances.find(
+    (row) => row.status === "done" && row.generated_for_date != null && row.generated_for_date <= today,
   );
 
   return {
     history,
-    currentInstanceId: current?.id ?? null,
+    currentInstanceId: pending?.id ?? null,
+    currentPeriodDone: !pending && Boolean(doneRecent),
     completedCount: history.filter((occurrence) => occurrence.status === "done").length,
   };
 }

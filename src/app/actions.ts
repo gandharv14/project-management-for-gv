@@ -1320,3 +1320,91 @@ export async function notifyMissedRecurringDuties() {
   revalidatePath("/manager");
   return missed.length;
 }
+
+export async function completeRecurringDuty(formData: FormData) {
+  const profile = await ensureCurrentProfile();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const ruleId = z.string().uuid().parse(text(formData, "ruleId"));
+
+  await requireProjectAccess(profile, projectId);
+
+  const supabase = getSupabaseAdmin();
+  const today = todayISO();
+
+  // Prefer completing an already-generated instance for the current or a past
+  // (missed) interval.
+  const { data: open } = await supabase
+    .from("tasks")
+    .select("id")
+    .eq("recurring_rule_id", ruleId)
+    .eq("project_id", projectId)
+    .neq("status", "done")
+    .lte("generated_for_date", today)
+    .order("generated_for_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let targetId = open?.id ?? null;
+
+  // No instance exists yet (e.g. the daily cron has not generated it). Generate
+  // the current interval on demand so the assignee can still mark it complete.
+  if (!targetId) {
+    const { data: rule, error: ruleError } = await supabase
+      .from("recurring_rules")
+      .select("*")
+      .eq("id", ruleId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+
+    if (ruleError) {
+      throw new Error(ruleError.message);
+    }
+
+    if (!rule) {
+      throw new Error("Recurring duty not found");
+    }
+
+    const scheduledDate = rule.next_run_on as string;
+    const dueDate = scheduledDate <= today ? scheduledDate : today;
+
+    const { data: created, error: createError } = await supabase
+      .from("tasks")
+      .upsert(
+        {
+          project_id: projectId,
+          recurring_rule_id: ruleId,
+          title: rule.title,
+          description: rule.description,
+          assignee_id: rule.assignee_id,
+          due_date: dueDate,
+          generated_for_date: dueDate,
+          status: "today",
+          created_by: rule.created_by,
+        },
+        { onConflict: "recurring_rule_id,generated_for_date" },
+      )
+      .select("id")
+      .single();
+
+    if (createError) {
+      throw new Error(createError.message);
+    }
+
+    targetId = created.id;
+
+    // If we consumed the scheduled occurrence, advance the rule like the cron would.
+    if (scheduledDate <= today) {
+      await supabase.from("recurring_rules").update({ next_run_on: nextRunDate(rule) }).eq("id", ruleId);
+    }
+  }
+
+  await supabase
+    .from("tasks")
+    .update({ status: "done", completed_at: new Date().toISOString(), overdue_notified_at: null })
+    .eq("id", targetId)
+    .eq("project_id", projectId);
+
+  revalidatePath(`/projects/${projectId}/board`);
+  revalidatePath("/today");
+  revalidatePath("/manager");
+}

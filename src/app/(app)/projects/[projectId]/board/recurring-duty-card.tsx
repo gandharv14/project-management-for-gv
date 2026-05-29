@@ -4,7 +4,7 @@ import * as React from "react";
 import type { FormEvent } from "react";
 import { CalendarClock, CheckCircle2, Repeat, Trash2 } from "lucide-react";
 
-import { deleteRecurringRule, updateTaskStatus } from "@/app/actions";
+import { completeRecurringDuty, deleteRecurringRule } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,18 @@ type RecurringDutyCardProps = {
   projectId: string;
   rule: RecurringRuleWithHistory;
 };
+
+function periodNoun(rule: RecurringRule) {
+  if (rule.frequency === "weekly") {
+    return "week";
+  }
+
+  if (rule.frequency === "custom" && (rule.interval_days ?? 1) > 1) {
+    return "interval";
+  }
+
+  return "day";
+}
 
 function formatSchedule(rule: RecurringRule) {
   if (rule.frequency === "daily") {
@@ -123,17 +135,21 @@ export function RecurringDutyCard({ projectId, rule }: RecurringDutyCardProps) {
               </FormSubmitButton>
             </ActionForm>
             <div className="flex gap-2">
-              {rule.currentInstanceId ? (
-                <ActionForm action={updateTaskStatus}>
+              {rule.currentPeriodDone ? (
+                <span className="flex items-center gap-1 text-sm font-medium text-emerald-600">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Done this {periodNoun(rule)}
+                </span>
+              ) : (
+                <ActionForm action={completeRecurringDuty}>
                   <input name="projectId" type="hidden" value={projectId} />
-                  <input name="taskId" type="hidden" value={rule.currentInstanceId} />
-                  <input name="status" type="hidden" value="done" />
+                  <input name="ruleId" type="hidden" value={rule.id} />
                   <FormSubmitButton pendingLabel="Completing..." size="sm">
                     <CheckCircle2 className="h-4 w-4" />
                     Mark done
                   </FormSubmitButton>
                 </ActionForm>
-              ) : null}
+              )}
               <DialogClose asChild>
                 <Button type="button" variant="outline">
                   Close
@@ -146,18 +162,20 @@ export function RecurringDutyCard({ projectId, rule }: RecurringDutyCardProps) {
 
       <div className="flex items-center justify-between gap-2">
         <HistoryStrip history={rule.history} />
-        {rule.currentInstanceId ? (
-          <ActionForm action={updateTaskStatus}>
+        {rule.currentPeriodDone ? (
+          <span className="flex items-center gap-1 text-xs font-medium text-emerald-600">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Done
+          </span>
+        ) : (
+          <ActionForm action={completeRecurringDuty}>
             <input name="projectId" type="hidden" value={projectId} />
-            <input name="taskId" type="hidden" value={rule.currentInstanceId} />
-            <input name="status" type="hidden" value="done" />
+            <input name="ruleId" type="hidden" value={rule.id} />
             <FormSubmitButton pendingLabel="..." size="sm" variant="secondary">
               <CheckCircle2 className="h-4 w-4" />
               Mark done
             </FormSubmitButton>
           </ActionForm>
-        ) : (
-          <span className="text-xs text-muted-foreground">Up to date</span>
         )}
       </div>
     </div>
