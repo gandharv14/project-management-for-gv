@@ -4,7 +4,8 @@ import Link from "next/link";
 import type React from "react";
 import { ImageIcon } from "lucide-react";
 
-import { createProjectUserFlag } from "@/app/actions";
+import { createProjectUserFlag, updateProjectUserFlagStage } from "@/app/actions";
+import { ActionForm } from "@/components/action-form";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { RealtimeRefresh } from "@/components/realtime-refresh";
 import { Badge } from "@/components/ui/badge";
@@ -14,11 +15,54 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { getAppContext, getProjectUserFlagsState } from "@/lib/data";
-import type { ProjectUserFlag } from "@/lib/types";
+import type { FlagStage, ProfileRole, ProjectUserFlag } from "@/lib/types";
+
+const STAGE_META: Record<
+  FlagStage,
+  { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
+> = {
+  flagged: { label: "Flagged", variant: "destructive" },
+  warned: { label: "Warned / Steered", variant: "secondary" },
+  remove_requested: { label: "Remove Requested", variant: "destructive" },
+  removed: { label: "Removed", variant: "outline" },
+};
+
+type StageAction = {
+  nextStage: FlagStage;
+  buttonLabel: string;
+  pendingLabel: string;
+  managerOnly: boolean;
+  description: string;
+};
+
+const STAGE_ACTIONS: Record<FlagStage, StageAction | null> = {
+  flagged: {
+    nextStage: "warned",
+    buttonLabel: "Mark Warned / Steered",
+    pendingLabel: "Updating...",
+    managerOnly: false,
+    description: "Reach out to the user once, then record that they were warned or steered.",
+  },
+  warned: {
+    nextStage: "remove_requested",
+    buttonLabel: "Mark Remove",
+    pendingLabel: "Requesting...",
+    managerOnly: false,
+    description: "If the user continues, request removal. Managers are notified.",
+  },
+  remove_requested: {
+    nextStage: "removed",
+    buttonLabel: "Mark Removed",
+    pendingLabel: "Removing...",
+    managerOnly: true,
+    description: "Only a manager can confirm removal.",
+  },
+  removed: null,
+};
 
 export default async function FlagsPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
-  const { activeProject } = await getAppContext(projectId);
+  const { activeProject, profile } = await getAppContext(projectId);
 
   if (!activeProject) {
     return null;
@@ -28,7 +72,7 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
-      <RealtimeRefresh tables={["project_user_flags"]} />
+      <RealtimeRefresh tables={["project_user_flags", "project_user_flag_events"]} />
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Flag User</h1>
         <p className="text-muted-foreground">
@@ -52,7 +96,7 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
             </Card>
           ) : null}
           {flags.map((flag) => (
-            <FlagCard flag={flag} key={flag.id} />
+            <FlagCard flag={flag} key={flag.id} projectId={projectId} viewerRole={profile.role} />
           ))}
           {flags.length === 0 && !setupRequired ? (
             <Card>
@@ -69,7 +113,7 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form action={createProjectUserFlag} className="grid gap-3">
+            <ActionForm action={createProjectUserFlag} className="grid gap-3">
               <input name="projectId" type="hidden" value={projectId} />
               <Field label="Email">
                 <Input name="email" placeholder="Required if alias email is blank" type="email" />
@@ -96,7 +140,7 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
               <FormSubmitButton disabled={setupRequired} pendingLabel="Flagging...">
                 Flag user
               </FormSubmitButton>
-            </form>
+            </ActionForm>
           </CardContent>
         </Card>
       </div>
@@ -104,9 +148,21 @@ export default async function FlagsPage({ params }: { params: Promise<{ projectI
   );
 }
 
-function FlagCard({ flag }: { flag: ProjectUserFlag }) {
+function FlagCard({
+  flag,
+  projectId,
+  viewerRole,
+}: {
+  flag: ProjectUserFlag;
+  projectId: string;
+  viewerRole: ProfileRole;
+}) {
   const reporter = flag.reporter?.display_name ?? flag.reporter?.email ?? "Unknown member";
   const primaryIdentifier = flag.email ?? flag.alias_email ?? "Unknown flagged user";
+  const stageMeta = STAGE_META[flag.stage];
+  const stageAction = STAGE_ACTIONS[flag.stage];
+  const canAct = stageAction ? !stageAction.managerOnly || viewerRole === "manager" : false;
+  const events = flag.events ?? [];
 
   return (
     <Card>
@@ -114,7 +170,7 @@ function FlagCard({ flag }: { flag: ProjectUserFlag }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="mb-2 flex flex-wrap items-center gap-2">
-              <Badge variant="destructive">Flagged</Badge>
+              <Badge variant={stageMeta.variant}>{stageMeta.label}</Badge>
               {flag.email && flag.alias_email ? <Badge variant="secondary">Alias: {flag.alias_email}</Badge> : null}
             </div>
             <CardTitle className="break-words">{primaryIdentifier}</CardTitle>
@@ -180,6 +236,43 @@ function FlagCard({ flag }: { flag: ProjectUserFlag }) {
             </div>
           </div>
         ) : null}
+
+        <div className="rounded-lg border bg-background/60 p-4">
+          <p className="mb-3 text-sm font-medium">Stage progress</p>
+          {events.length > 0 ? (
+            <ol className="mb-4 grid gap-3">
+              {events.map((event) => (
+                <li className="flex flex-col gap-1 border-l-2 pl-3 text-sm" key={event.id}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={STAGE_META[event.stage].variant}>{STAGE_META[event.stage].label}</Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {event.actor?.display_name ?? event.actor?.email ?? "Unknown member"} ·{" "}
+                      {formatDistanceToNow(new Date(event.created_at), { addSuffix: true })}
+                    </span>
+                  </div>
+                  {event.note ? <p className="whitespace-pre-wrap text-muted-foreground">{event.note}</p> : null}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="mb-4 text-sm text-muted-foreground">No stage updates yet.</p>
+          )}
+
+          {stageAction && canAct ? (
+            <ActionForm action={updateProjectUserFlagStage} className="grid gap-2">
+              <input name="projectId" type="hidden" value={projectId} />
+              <input name="flagId" type="hidden" value={flag.id} />
+              <input name="stage" type="hidden" value={stageAction.nextStage} />
+              <p className="text-xs text-muted-foreground">{stageAction.description}</p>
+              <Textarea name="note" placeholder="Add an optional note about this update" rows={2} />
+              <FormSubmitButton pendingLabel={stageAction.pendingLabel}>{stageAction.buttonLabel}</FormSubmitButton>
+            </ActionForm>
+          ) : stageAction && !canAct ? (
+            <p className="text-sm text-muted-foreground">{stageAction.description}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground">This user has been removed. No further action is needed.</p>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

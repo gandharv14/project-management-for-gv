@@ -1,7 +1,8 @@
 import Link from "next/link";
 import type React from "react";
-import { Bell, Flag, LayoutDashboard, Lightbulb, ListChecks, ShieldAlert, Settings } from "lucide-react";
+import { Flag, LayoutDashboard, Lightbulb, ListChecks, ShieldAlert, Settings } from "lucide-react";
 
+import { NotificationList } from "@/components/notification-list";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,7 +35,6 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? projects[0];
-  const unreadCount = notifications.filter((notification) => !notification.read_at).length;
   const logoutHref = process.env.E2E_AUTH_BYPASS === "1" ? "/api/e2e/session?logout=1&redirectTo=/" : "/auth/logout";
 
   return (
@@ -122,30 +122,7 @@ export function AppShell({
         ) : null}
 
         <div className="mt-auto">
-          <div className="mb-4 rounded-lg border bg-background/60 p-3">
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <Bell className="h-4 w-4" />
-              Notifications
-              {unreadCount > 0 ? <Badge>{unreadCount}</Badge> : null}
-            </div>
-            <div className="space-y-2">
-              {notifications.slice(0, 3).map((notification) => (
-                <Link
-                  href={notification.href ?? "/today"}
-                  key={notification.id}
-                  className="block rounded-md p-2 text-xs hover:bg-accent"
-                >
-                  <span className="font-medium">{notification.title}</span>
-                  {notification.body ? (
-                    <span className="mt-1 block text-muted-foreground">{notification.body}</span>
-                  ) : null}
-                </Link>
-              ))}
-              {notifications.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No notifications yet.</p>
-              ) : null}
-            </div>
-          </div>
+          <NotificationList notifications={notifications} />
           <div className="flex items-center gap-3">
             <Avatar>
               {profile.avatar_url ? <AvatarImage src={profile.avatar_url} alt={profile.display_name} /> : null}

@@ -3,12 +3,14 @@ export const BLOCKER_STATUSES = ["open", "acknowledged", "resolved"] as const;
 export const SUGGESTION_STATUSES = ["open", "under_consideration", "accepted", "parked"] as const;
 export const SUGGESTION_CATEGORIES = ["proposal", "project", "management", "process", "tooling", "other"] as const;
 export const RECURRENCE_FREQUENCIES = ["daily", "weekly", "custom"] as const;
+export const FLAG_STAGES = ["flagged", "warned", "remove_requested", "removed"] as const;
 
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type BlockerStatus = (typeof BLOCKER_STATUSES)[number];
 export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number];
 export type SuggestionCategory = (typeof SUGGESTION_CATEGORIES)[number];
 export type RecurrenceFrequency = (typeof RECURRENCE_FREQUENCIES)[number];
+export type FlagStage = (typeof FLAG_STAGES)[number];
 export type ProfileRole = "manager" | "member";
 export type ProfileMembershipScope = "workspace" | "project";
 
@@ -51,9 +53,25 @@ export type ProjectUserFlag = {
   reason: string;
   task_link: string | null;
   screenshot_urls: string[];
+  stage: FlagStage;
+  stage_updated_at: string | null;
+  stage_updated_by: string | null;
   created_at: string;
   updated_at: string;
   reporter?: Profile | null;
+  stage_updater?: Profile | null;
+  events?: ProjectUserFlagEvent[];
+};
+
+export type ProjectUserFlagEvent = {
+  id: string;
+  flag_id: string;
+  project_id: string;
+  stage: FlagStage;
+  note: string | null;
+  actor_id: string | null;
+  created_at: string;
+  actor?: Profile | null;
 };
 
 export type Task = {
@@ -151,9 +169,13 @@ export type SuggestionComment = {
 };
 
 export const DISPLAYED_NOTIFICATION_TYPES = [
+  "assignment_created",
   "blocker_status_changed",
   "recurring_task_created",
   "recurring_task_missed",
+  "suggestion_traction",
+  "suggestion_promoted",
+  "flag_removal_requested",
 ] as const;
 
 export type NotificationType =
@@ -162,7 +184,8 @@ export type NotificationType =
   | "recurring_task_created"
   | "recurring_task_missed"
   | "suggestion_traction"
-  | "suggestion_promoted";
+  | "suggestion_promoted"
+  | "flag_removal_requested";
 
 export type Notification = {
   id: string;

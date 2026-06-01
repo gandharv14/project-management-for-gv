@@ -12,6 +12,11 @@ export default defineConfig({
     ["html", { outputFolder: "output/playwright/html-report", open: "never" }],
   ],
   outputDir: "output/playwright/test-results",
+  // Server actions re-fetch server components against a remote Supabase, so a
+  // successful mutation can take a few seconds to reflect via router.refresh().
+  // Give assertions headroom beyond the 5s default.
+  expect: { timeout: 15000 },
+  timeout: 60000,
   use: {
     baseURL: "http://localhost:3100",
     trace: "on-first-retry",

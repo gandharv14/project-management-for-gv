@@ -6,6 +6,7 @@ import {
   E2E_MEMBER,
   E2E_PROJECT_MEMBER,
   E2E_PROJECT_ONLY_MEMBER,
+  getE2EAnonSupabase,
   getE2ESupabase,
   hasMembershipScopeColumn,
   hasSuggestionCategoryColumn,
@@ -442,5 +443,174 @@ test.describe("core product flows", () => {
     await expect(page.getByText("E2E Seed Blocker")).toBeVisible();
     await expect(page.getByText("E2E Seed Suggestion")).toBeVisible();
     await expect(page.getByRole("cell", { name: "E2E Member" }).first()).toBeVisible();
+  });
+
+  test("denies anon-key access to protected tables (RLS)", async () => {
+    const anon = getE2EAnonSupabase();
+
+    // Seed data exists (resetE2EData), so a non-empty result would mean the
+    // public anon key can read protected rows. With RLS enabled it must not.
+    const profiles = await anon.from("profiles").select("id").limit(1);
+    expect(profiles.data ?? []).toHaveLength(0);
+
+    const flags = await anon.from("project_user_flags").select("id").limit(1);
+    expect(flags.data ?? []).toHaveLength(0);
+
+    // An insert through the anon key must also be rejected.
+    const insert = await anon
+      .from("suggestions")
+      .insert({ project_id: seed.project.id, title: "anon insert should fail" });
+    expect(insert.error).not.toBeNull();
+  });
+
+  test("catches up missed recurring instances without resetting completed ones", async ({ request }) => {
+    test.skip(!process.env.CRON_SECRET, "CRON_SECRET is required for recurring cron E2E coverage.");
+
+    const supabase = getE2ESupabase();
+    const { data: rule, error: ruleError } = await supabase
+      .from("recurring_rules")
+      .insert({
+        project_id: seed.project.id,
+        title: "E2E Catch-up Duty",
+        assignee_id: seed.member.id,
+        frequency: "daily",
+        next_run_on: todayISO(-3),
+        created_by: seed.manager.id,
+      })
+      .select("id")
+      .single();
+
+    if (ruleError || !rule) {
+      throw new Error(ruleError?.message ?? "Recurring rule was not created.");
+    }
+
+    const firstCron = await request.get("/api/cron/recurring", {
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    expect(firstCron.ok()).toBeTruthy();
+
+    const { data: firstInstances, error: firstError } = await supabase
+      .from("tasks")
+      .select("id, generated_for_date, status")
+      .eq("recurring_rule_id", rule.id)
+      .order("generated_for_date", { ascending: true });
+
+    if (firstError) {
+      throw new Error(firstError.message);
+    }
+
+    const instances = firstInstances ?? [];
+    // A 3-day-stale daily rule must generate the missed occurrences, not one.
+    expect(instances.length).toBeGreaterThanOrEqual(3);
+
+    const oldest = instances.find((task) => task.generated_for_date === todayISO(-3));
+    expect(oldest).toBeDefined();
+
+    // Complete the oldest instance, then force the cron to revisit the same
+    // dates. ON CONFLICT DO NOTHING must neither duplicate nor reset it.
+    await assertWrite(
+      await supabase
+        .from("tasks")
+        .update({ status: "done", completed_at: new Date().toISOString() })
+        .eq("id", oldest!.id),
+    );
+    await assertWrite(await supabase.from("recurring_rules").update({ next_run_on: todayISO(-3) }).eq("id", rule.id));
+
+    const secondCron = await request.get("/api/cron/recurring", {
+      headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+    });
+    expect(secondCron.ok()).toBeTruthy();
+
+    const { data: afterInstances, error: afterError } = await supabase
+      .from("tasks")
+      .select("id, status")
+      .eq("recurring_rule_id", rule.id);
+
+    if (afterError) {
+      throw new Error(afterError.message);
+    }
+
+    // No duplicate instances were created on the second run.
+    expect(afterInstances ?? []).toHaveLength(instances.length);
+    // The completed instance was not reset back to "today".
+    expect((afterInstances ?? []).find((task) => task.id === oldest!.id)?.status).toBe("done");
+  });
+
+  test("surfaces and clears the assignment notification", async ({ page }) => {
+    await loginAs(page, "manager", `/projects/${seed.project.id}/board`);
+
+    await page.getByRole("button", { name: "Create task" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Title").fill("E2E Assigned Task");
+    await dialog.getByLabel("Assignee").selectOption(seed.member.id);
+    await dialog.getByRole("button", { name: "Create task" }).click();
+    await expect(dialog).toBeHidden();
+
+    await loginAs(page, "member", "/today");
+    await expect(page.getByText("New task assigned")).toBeVisible();
+
+    const markAll = page.getByRole("button", { name: "Mark all read" });
+    await expect(markAll).toBeVisible();
+    await markAll.click();
+    await expect(page.getByRole("button", { name: "Mark all read" })).toHaveCount(0);
+  });
+
+  test("toggles a suggestion vote on and off", async ({ page }) => {
+    const supabase = getE2ESupabase();
+    const hasSuggestionCategories = await hasSuggestionCategoryColumn();
+    const { data: suggestion, error } = await supabase
+      .from("suggestions")
+      .insert({
+        project_id: seed.project.id,
+        title: "E2E Vote Toggle Suggestion",
+        description: "Toggle this vote",
+        ...(hasSuggestionCategories ? { category: "project" } : {}),
+        author_id: seed.manager.id,
+      })
+      .select("id")
+      .single();
+
+    if (error || !suggestion) {
+      throw new Error(error?.message ?? "Suggestion was not created.");
+    }
+
+    await loginAs(page, "member", `/projects/${seed.project.id}/suggestions`);
+    const card = page.locator('[data-slot="card"]').filter({ hasText: "E2E Vote Toggle Suggestion" }).first();
+    await expect(card.getByText("0 votes")).toBeVisible();
+
+    await card.getByRole("button", { name: "Upvote" }).click();
+    await expect(card.getByText("1 votes")).toBeVisible();
+
+    await card.getByRole("button", { name: "Upvote" }).click();
+    await expect(card.getByText("0 votes")).toBeVisible();
+  });
+
+  test("rejects an unsafe task link on the flag form", async ({ page }) => {
+    const supabase = getE2ESupabase();
+    const flaggedEmail = "unsafe.link.e2e@example.com";
+
+    await loginAs(page, "manager", `/projects/${seed.project.id}/flags`);
+    const flagForm = page.locator("form").filter({ hasText: "Reason for flagging" }).first();
+    await flagForm.locator('input[name="email"]').fill(flaggedEmail);
+    await flagForm.locator('textarea[name="reason"]').fill("Testing unsafe task link rejection.");
+    // ftp:// passes the browser's native url-input validation but must be
+    // rejected server-side, where only http/https links are allowed.
+    await flagForm.locator('input[name="taskLink"]').fill("ftp://evil.example.com/x");
+    await flagForm.getByRole("button", { name: "Flag user" }).click();
+
+    await expect(page.getByRole("alert")).toBeVisible();
+
+    const { data: flag, error } = await supabase
+      .from("project_user_flags")
+      .select("id")
+      .eq("project_id", seed.project.id)
+      .eq("email", flaggedEmail)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    expect(flag).toBeNull();
   });
 });

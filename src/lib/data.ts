@@ -1,4 +1,4 @@
-import { addDays, differenceInCalendarDays, formatISO, subDays } from "date-fns";
+import { differenceInCalendarDays, formatISO, subDays } from "date-fns";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
@@ -15,6 +15,7 @@ import {
   type Project,
   type ProjectMember,
   type ProjectUserFlag,
+  type ProjectUserFlagEvent,
   type RecurringOccurrence,
   type RecurringRule,
   type RecurringRuleWithHistory,
@@ -210,15 +211,12 @@ export async function ensureCurrentProfile() {
   const normalizedEmail = normalizeEmail(user.email);
   const managerEmail = process.env.MANAGER_EMAIL ? normalizeEmail(process.env.MANAGER_EMAIL) : null;
 
-  const { data: managerData, error: managerError } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("role", "manager")
-    .limit(1)
-    .maybeSingle();
-
-  const manager = assertDb<{ id: string } | null>(managerData, managerError);
-  const role = managerEmail === normalizedEmail || !manager ? "manager" : "member";
+  // Only the configured MANAGER_EMAIL is granted the manager role on first
+  // sign-in. Never auto-promote based on the absence of an existing manager,
+  // which previously let any first/orphaned login become a manager. Existing
+  // managers keep their role because the reconcile RPC only applies the role on
+  // initial profile creation.
+  const role: ProfileRole = managerEmail !== null && managerEmail === normalizedEmail ? "manager" : "member";
   // Login self-signups default to the workspace scope so they appear in the
   // workspace member list and are synced into every project. Project-only
   // members are created exclusively through the invite flow.
@@ -375,6 +373,12 @@ export async function requireProjectAccess(profile: Profile, projectId: string) 
   return project;
 }
 
+const TASK_LINKED_NOTIFICATION_TYPES = new Set<string>([
+  "assignment_created",
+  "recurring_task_created",
+  "recurring_task_missed",
+]);
+
 export async function listNotifications(profileId: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
@@ -412,16 +416,22 @@ export async function listNotifications(profileId: string) {
   const blockerAlive = new Set((aliveBlockers.data ?? []).map((row) => row.id));
   const taskAlive = new Set((aliveTasks.data ?? []).map((row) => row.id));
 
-  // Validate-on-read: only surface notifications whose linked entity still
-  // exists. This also drops legacy rows that predate entity linkage (where
-  // task_id/blocker_id are null), which are the stale "deleted item" rows.
+  // Validate-on-read: for notifications that link to a task or blocker, only
+  // surface them while that entity still exists (this also drops legacy rows
+  // that predate entity linkage). Notifications that intentionally carry no
+  // entity link (e.g. suggestion_traction, suggestion_promoted) reference the
+  // suggestion via href and are always shown.
   return rows
     .filter((row) => {
       if (row.type === "blocker_status_changed") {
         return Boolean(row.blocker_id) && blockerAlive.has(row.blocker_id as string);
       }
 
-      return Boolean(row.task_id) && taskAlive.has(row.task_id as string);
+      if (TASK_LINKED_NOTIFICATION_TYPES.has(row.type)) {
+        return Boolean(row.task_id) && taskAlive.has(row.task_id as string);
+      }
+
+      return true;
     })
     .slice(0, 10);
 }
@@ -553,7 +563,8 @@ export async function listProjectUserFlags(projectId: string) {
 }
 
 export async function getProjectUserFlagsState(projectId: string) {
-  const { data, error } = await getSupabaseAdmin()
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
     .from("project_user_flags")
     .select("*, reporter:profiles!project_user_flags_flagged_by_fkey(*)")
     .eq("project_id", projectId)
@@ -566,8 +577,41 @@ export async function getProjectUserFlagsState(projectId: string) {
     };
   }
 
+  const rawFlags = assertDb<Array<Omit<ProjectUserFlag, "stage"> & { stage?: ProjectUserFlag["stage"] }>>(data, error);
+  const flagIds = rawFlags.map((flag) => flag.id);
+
+  let eventsByFlag = new Map<string, ProjectUserFlagEvent[]>();
+
+  if (flagIds.length > 0) {
+    const { data: eventData, error: eventError } = await supabase
+      .from("project_user_flag_events")
+      .select("*, actor:profiles!project_user_flag_events_actor_id_fkey(*)")
+      .in("flag_id", flagIds)
+      .order("created_at", { ascending: false });
+
+    // The events table only exists once the staged-flagging migration has run.
+    // Treat a missing relation as "no history yet" rather than a hard failure.
+    if (!isMissingRelation(eventError, "project_user_flag_events")) {
+      const events = assertDb<ProjectUserFlagEvent[]>(eventData, eventError);
+      eventsByFlag = events.reduce((acc, event) => {
+        const list = acc.get(event.flag_id) ?? [];
+        list.push(event);
+        acc.set(event.flag_id, list);
+        return acc;
+      }, new Map<string, ProjectUserFlagEvent[]>());
+    }
+  }
+
+  const flags: ProjectUserFlag[] = rawFlags.map((flag) => ({
+    ...flag,
+    stage: flag.stage ?? "flagged",
+    stage_updated_at: flag.stage_updated_at ?? null,
+    stage_updated_by: flag.stage_updated_by ?? null,
+    events: eventsByFlag.get(flag.id) ?? [],
+  }));
+
   return {
-    flags: assertDb<ProjectUserFlag[]>(data, error),
+    flags,
     setupRequired: false,
   };
 }
@@ -803,26 +847,5 @@ export async function getManagerDashboard() {
   };
 }
 
-export function nextRunDate(rule: Pick<RecurringRule, "frequency" | "interval_days" | "weekdays" | "next_run_on">) {
-  const current = new Date(`${rule.next_run_on}T00:00:00`);
-
-  if (rule.frequency === "daily") {
-    return formatISO(addDays(current, 1), { representation: "date" });
-  }
-
-  if (rule.frequency === "custom") {
-    return formatISO(addDays(current, rule.interval_days ?? 1), { representation: "date" });
-  }
-
-  const weekdays = rule.weekdays.length > 0 ? rule.weekdays : [current.getDay()];
-  for (let offset = 1; offset <= 14; offset += 1) {
-    const candidate = addDays(current, offset);
-    if (weekdays.includes(candidate.getDay())) {
-      return formatISO(candidate, { representation: "date" });
-    }
-  }
-
-  return formatISO(addDays(current, 7), { representation: "date" });
-}
-
+export { nextRunDate } from "@/lib/recurrence";
 export { todayISO };

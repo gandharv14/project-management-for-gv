@@ -109,6 +109,17 @@ export function getE2ESupabase() {
   });
 }
 
+// Client built from the public anon key (the one the browser would ship). Used
+// to assert that Row Level Security denies direct table access.
+export function getE2EAnonSupabase() {
+  return createClient(requireEnv("NEXT_PUBLIC_SUPABASE_URL"), requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
 function isMissingColumn(error: { message: string } | null, columnName: string) {
   return Boolean(
     error?.message.includes(columnName) &&
@@ -176,7 +187,13 @@ export async function upsertE2EProfile(input: SeedProfileInput, membershipScope:
 export function todayISO(offsetDays = 0) {
   const date = new Date();
   date.setDate(date.getDate() + offsetDays);
-  return date.toISOString().slice(0, 10);
+  // Use the LOCAL calendar date to match the server's todayISO (date-fns
+  // formatISO with representation "date"). Using UTC here drifts by a day near
+  // midnight in non-UTC timezones and desynchronizes seeded dates from the app.
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 async function assertData<T>(result: { data: T | null; error: { message: string } | null }) {

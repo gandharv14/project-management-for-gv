@@ -3,57 +3,62 @@
 import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 
-import { getSupabaseBrowser } from "@/lib/supabase";
+const POLL_INTERVAL_MS = 15000;
 
-const REFRESH_DEBOUNCE_MS = 500;
-
+/**
+ * Periodically refreshes server components so collaborative changes show up
+ * without a manual reload. This used to subscribe to Supabase Realtime with the
+ * public anon key, but that key is no longer shipped to the browser now that
+ * Row Level Security denies anon access. The `tables` prop is retained for
+ * call-site compatibility; any change to the subscribed data is picked up on
+ * the next poll.
+ */
 export function RealtimeRefresh({ tables }: { tables: string[] }) {
   const router = useRouter();
-  const tableKey = useMemo(() => [...tables].sort().join(":"), [tables]);
+  // Retained only so a changed set of watched tables restarts the poll loop;
+  // the actual refresh re-fetches all server data for the route regardless.
+  const pollKey = useMemo(() => [...tables].sort().join(":"), [tables]);
 
   useEffect(() => {
-    const supabase = getSupabaseBrowser();
+    let timer: ReturnType<typeof setInterval> | null = null;
 
-    if (!supabase || tableKey.length === 0) {
-      return;
-    }
-
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const refresh = () => {
-      if (refreshTimer) {
-        clearTimeout(refreshTimer);
+    const start = () => {
+      if (timer) {
+        return;
       }
 
-      refreshTimer = setTimeout(() => {
-        refreshTimer = null;
-        router.refresh();
-      }, REFRESH_DEBOUNCE_MS);
+      timer = setInterval(() => {
+        if (!document.hidden) {
+          router.refresh();
+        }
+      }, POLL_INTERVAL_MS);
     };
 
-    const channel = supabase.channel(`realtime-refresh:${tableKey}`);
+    const stop = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
 
-    for (const table of tableKey.split(":")) {
-      channel.on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table,
-        },
-        refresh,
-      );
-    }
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        // Refresh immediately when returning to the tab, then resume polling.
+        router.refresh();
+        start();
+      }
+    };
 
-    channel.subscribe();
+    start();
+    document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
-      if (refreshTimer) {
-        clearTimeout(refreshTimer);
-      }
-
-      void supabase.removeChannel(channel);
+      stop();
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [router, tableKey]);
+  }, [router, pollKey]);
 
   return null;
 }

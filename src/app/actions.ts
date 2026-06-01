@@ -5,10 +5,13 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { ensureCurrentProfile, nextRunDate, requireManager, requireProjectAccess, todayISO } from "@/lib/data";
+import { recurringRunDatesUpTo } from "@/lib/recurrence";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { SUGGESTION_CATEGORIES } from "@/lib/types";
+import { httpUrlSchema } from "@/lib/validation";
+import { FLAG_STAGES, SUGGESTION_CATEGORIES } from "@/lib/types";
 import type {
   BlockerStatus,
+  FlagStage,
   Profile,
   ProfileMembershipScope,
   ProfileRole,
@@ -339,7 +342,8 @@ async function notify(input: {
     | "recurring_task_created"
     | "recurring_task_missed"
     | "suggestion_traction"
-    | "suggestion_promoted";
+    | "suggestion_promoted"
+    | "flag_removal_requested";
   title: string;
   body?: string | null;
   href?: string | null;
@@ -717,7 +721,7 @@ export async function createTask(formData: FormData) {
   await requireProjectAccess(profile, projectId);
 
   const status = (text(formData, "status") ?? "backlog") as TaskStatus;
-  const { error } = await getSupabaseAdmin()
+  const { data: task, error } = await getSupabaseAdmin()
     .from("tasks")
     .insert({
       project_id: projectId,
@@ -727,7 +731,9 @@ export async function createTask(formData: FormData) {
       due_date: text(formData, "dueDate"),
       status,
       created_by: profile.id,
-    });
+    })
+    .select("id")
+    .single();
 
   if (error) {
     throw new Error(error.message);
@@ -740,6 +746,7 @@ export async function createTask(formData: FormData) {
     title: "New task assigned",
     body: title,
     href: `/projects/${projectId}/board`,
+    taskId: task.id,
   });
 
   revalidatePath(`/projects/${projectId}/board`);
@@ -959,7 +966,7 @@ export async function createProjectUserFlag(formData: FormData) {
   const email = emailValue ? z.string().email().parse(emailValue) : null;
   const aliasEmail = aliasEmailValue ? z.string().email().parse(aliasEmailValue) : null;
   const taskLinkValue = text(formData, "taskLink") ?? null;
-  const taskLink = taskLinkValue ? z.string().url().parse(taskLinkValue) : null;
+  const taskLink = taskLinkValue ? httpUrlSchema.parse(taskLinkValue) : null;
   const screenshotFiles = suggestionScreenshotFiles(formData);
 
   await requireProjectAccess(profile, projectId);
@@ -988,6 +995,100 @@ export async function createProjectUserFlag(formData: FormData) {
   }
 
   revalidatePath(`/projects/${projectId}/flags`);
+}
+
+// Forward-only stage progression for flagged users. Coordinators (members) can
+// move a flag through warning and the removal request; only managers can mark a
+// user as removed.
+const FLAG_STAGE_TRANSITIONS: Record<FlagStage, { next: FlagStage; managerOnly: boolean } | null> = {
+  flagged: { next: "warned", managerOnly: false },
+  warned: { next: "remove_requested", managerOnly: false },
+  remove_requested: { next: "removed", managerOnly: true },
+  removed: null,
+};
+
+export async function updateProjectUserFlagStage(formData: FormData) {
+  const profile = await ensureCurrentProfile();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const flagId = z.string().uuid().parse(text(formData, "flagId"));
+  const stage = z.enum(FLAG_STAGES).parse(text(formData, "stage")) as FlagStage;
+  const note = text(formData, "note") ?? null;
+
+  await requireProjectAccess(profile, projectId);
+
+  const supabase = getSupabaseAdmin();
+  const { data: flag, error: flagError } = await supabase
+    .from("project_user_flags")
+    .select("id, stage, email, alias_email")
+    .eq("id", flagId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+
+  if (flagError) {
+    throw new Error(flagError.message);
+  }
+
+  if (!flag) {
+    return;
+  }
+
+  const currentStage = (flag.stage ?? "flagged") as FlagStage;
+  const transition = FLAG_STAGE_TRANSITIONS[currentStage];
+
+  if (!transition || transition.next !== stage) {
+    throw new Error(`Cannot move flag from ${currentStage} to ${stage}.`);
+  }
+
+  if (transition.managerOnly && profile.role !== "manager") {
+    throw new Error("Only a manager can mark a flagged user as removed.");
+  }
+
+  const { error: updateError } = await supabase
+    .from("project_user_flags")
+    .update({
+      stage,
+      stage_updated_at: new Date().toISOString(),
+      stage_updated_by: profile.id,
+    })
+    .eq("id", flagId)
+    .eq("project_id", projectId);
+
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+
+  const { error: eventError } = await supabase.from("project_user_flag_events").insert({
+    flag_id: flagId,
+    project_id: projectId,
+    stage,
+    note: note && note.length > 0 ? note : null,
+    actor_id: profile.id,
+  });
+
+  if (eventError) {
+    throw new Error(eventError.message);
+  }
+
+  if (stage === "remove_requested") {
+    const flaggedUser = flag.email ?? flag.alias_email ?? "a flagged user";
+    const managerIds = await managerProfileIds();
+
+    await Promise.all(
+      managerIds.map((managerId) =>
+        notify({
+          profileId: managerId,
+          actorId: profile.id,
+          type: "flag_removal_requested",
+          title: "Removal requested for flagged user",
+          body: `${profile.display_name} requested removal of ${flaggedUser}.`,
+          href: `/projects/${projectId}/flags`,
+        }),
+      ),
+    );
+  }
+
+  revalidatePath(`/projects/${projectId}/flags`);
+  revalidatePath("/manager");
 }
 
 export async function createSuggestion(formData: FormData) {
@@ -1057,18 +1158,51 @@ export async function voteSuggestion(formData: FormData) {
     return;
   }
 
-  await supabase.from("suggestion_votes").upsert({
-    suggestion_id: suggestionId,
-    profile_id: profile.id,
-  });
+  // Toggle the viewer's vote: remove it if they already voted, otherwise add it.
+  const { data: existingVote, error: existingVoteError } = await supabase
+    .from("suggestion_votes")
+    .select("suggestion_id")
+    .eq("suggestion_id", suggestionId)
+    .eq("profile_id", profile.id)
+    .maybeSingle();
+
+  if (existingVoteError) {
+    throw new Error(existingVoteError.message);
+  }
+
+  let voteAdded = false;
+
+  if (existingVote) {
+    const { error: deleteError } = await supabase
+      .from("suggestion_votes")
+      .delete()
+      .eq("suggestion_id", suggestionId)
+      .eq("profile_id", profile.id);
+
+    if (deleteError) {
+      throw new Error(deleteError.message);
+    }
+  } else {
+    const { error: insertError } = await supabase
+      .from("suggestion_votes")
+      .insert({ suggestion_id: suggestionId, profile_id: profile.id });
+
+    if (insertError) {
+      throw new Error(insertError.message);
+    }
+
+    voteAdded = true;
+  }
 
   const { count } = await supabase
     .from("suggestion_votes")
     .select("suggestion_id", { count: "exact", head: true })
     .eq("suggestion_id", suggestionId);
 
+  // Notify the manager only when a newly added vote crosses the threshold, so
+  // they are alerted once instead of on every subsequent vote.
   const threshold = Number(process.env.SUGGESTION_TRACTION_THRESHOLD ?? "3");
-  if ((count ?? 0) >= threshold) {
+  if (voteAdded && (count ?? 0) === threshold) {
     const managerId = await defaultManagerId();
     await notify({
       profileId: managerId,
@@ -1202,17 +1336,31 @@ export async function promoteSuggestionToTask(formData: FormData) {
   revalidatePath(`/projects/${projectId}/board`);
 }
 
-export async function markNotificationRead(formData: FormData) {
+export async function markNotificationRead(notificationId: string) {
   const profile = await ensureCurrentProfile();
-  const notificationId = z.string().uuid().parse(text(formData, "notificationId"));
+  const id = z.string().uuid().parse(notificationId);
 
   await getSupabaseAdmin()
     .from("notifications")
     .update({ read_at: new Date().toISOString() })
-    .eq("id", notificationId)
+    .eq("id", id)
     .eq("profile_id", profile.id);
 
-  revalidatePath("/");
+  // The notifications panel lives in the shared (app) layout, so revalidate the
+  // whole layout subtree rather than a single page.
+  revalidatePath("/", "layout");
+}
+
+export async function markAllNotificationsRead() {
+  const profile = await ensureCurrentProfile();
+
+  await getSupabaseAdmin()
+    .from("notifications")
+    .update({ read_at: new Date().toISOString() })
+    .eq("profile_id", profile.id)
+    .is("read_at", null);
+
+  revalidatePath("/", "layout");
 }
 
 export async function generateRecurringInstances() {
@@ -1228,50 +1376,68 @@ export async function generateRecurringInstances() {
     throw new Error(error.message);
   }
 
-  for (const rule of rules ?? []) {
-    const dueDate = rule.next_run_on as string;
-    const { data: instance, error: insertError } = await supabase
-      .from("tasks")
-      .upsert(
-        {
-          project_id: rule.project_id,
-          recurring_rule_id: rule.id,
-          title: rule.title,
-          description: rule.description,
-          assignee_id: rule.assignee_id,
-          due_date: dueDate,
-          generated_for_date: dueDate,
-          status: "today",
-          created_by: rule.created_by,
-        },
-        { onConflict: "recurring_rule_id,generated_for_date" },
-      )
-      .select("id")
-      .single();
+  let createdCount = 0;
 
-    if (insertError) {
-      throw new Error(insertError.message);
+  for (const rule of rules ?? []) {
+    // Generate an instance for every scheduled occurrence up to today, so a
+    // cron that skipped one or more days catches up instead of advancing a
+    // single period and silently dropping the missed occurrences.
+    const dueDates = recurringRunDatesUpTo(rule, today);
+
+    for (const dueDate of dueDates) {
+      const { data: created, error: insertError } = await supabase
+        .from("tasks")
+        .upsert(
+          {
+            project_id: rule.project_id,
+            recurring_rule_id: rule.id,
+            title: rule.title,
+            description: rule.description,
+            assignee_id: rule.assignee_id,
+            due_date: dueDate,
+            generated_for_date: dueDate,
+            status: "today",
+            created_by: rule.created_by,
+          },
+          { onConflict: "recurring_rule_id,generated_for_date", ignoreDuplicates: true },
+        )
+        .select("id")
+        .maybeSingle();
+
+      if (insertError) {
+        throw new Error(insertError.message);
+      }
+
+      // With ignoreDuplicates the upsert is ON CONFLICT DO NOTHING, so it never
+      // resets an already-generated (possibly completed) instance back to
+      // "today". A row is only returned when one was actually created, which is
+      // also the only time we should notify the assignee.
+      if (created) {
+        createdCount += 1;
+        await notify({
+          profileId: rule.assignee_id,
+          actorId: rule.created_by,
+          type: "recurring_task_created",
+          title: "Recurring duty ready",
+          body: rule.title,
+          href: `/projects/${rule.project_id}/board`,
+          taskId: created.id,
+        });
+      }
     }
 
-    await notify({
-      profileId: rule.assignee_id,
-      actorId: rule.created_by,
-      type: "recurring_task_created",
-      title: "Recurring duty ready",
-      body: rule.title,
-      href: `/projects/${rule.project_id}/board`,
-      taskId: instance.id,
-    });
-
-    await supabase
-      .from("recurring_rules")
-      .update({ next_run_on: nextRunDate(rule) })
-      .eq("id", rule.id);
+    if (dueDates.length > 0) {
+      const lastDueDate = dueDates[dueDates.length - 1];
+      await supabase
+        .from("recurring_rules")
+        .update({ next_run_on: nextRunDate({ ...rule, next_run_on: lastDueDate }) })
+        .eq("id", rule.id);
+    }
   }
 
   revalidatePath("/today");
   revalidatePath("/manager");
-  return rules?.length ?? 0;
+  return createdCount;
 }
 
 export async function notifyMissedRecurringDuties() {
@@ -1367,6 +1533,8 @@ export async function completeRecurringDuty(formData: FormData) {
     const scheduledDate = rule.next_run_on as string;
     const dueDate = scheduledDate <= today ? scheduledDate : today;
 
+    // Insert the instance only if one does not already exist for this date;
+    // never overwrite an existing (possibly completed) instance.
     const { data: created, error: createError } = await supabase
       .from("tasks")
       .upsert(
@@ -1381,16 +1549,38 @@ export async function completeRecurringDuty(formData: FormData) {
           status: "today",
           created_by: rule.created_by,
         },
-        { onConflict: "recurring_rule_id,generated_for_date" },
+        { onConflict: "recurring_rule_id,generated_for_date", ignoreDuplicates: true },
       )
       .select("id")
-      .single();
+      .maybeSingle();
 
     if (createError) {
       throw new Error(createError.message);
     }
 
-    targetId = created.id;
+    targetId = created?.id ?? null;
+
+    if (!targetId) {
+      // The instance already existed (e.g. generated by cron between our read
+      // and write); fetch it so we can mark it done.
+      const { data: existing, error: existingError } = await supabase
+        .from("tasks")
+        .select("id")
+        .eq("recurring_rule_id", ruleId)
+        .eq("project_id", projectId)
+        .eq("generated_for_date", dueDate)
+        .maybeSingle();
+
+      if (existingError) {
+        throw new Error(existingError.message);
+      }
+
+      targetId = existing?.id ?? null;
+    }
+
+    if (!targetId) {
+      throw new Error("Unable to prepare recurring duty instance");
+    }
 
     // If we consumed the scheduled occurrence, advance the rule like the cron would.
     if (scheduledDate <= today) {
