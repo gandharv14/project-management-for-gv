@@ -18,6 +18,10 @@ type CallOptions = {
   system: string;
   user: string;
   model?: string;
+  /**
+   * Optional sampling temperature. Omitted by default because some models
+   * (e.g. anthropic/claude-opus-4-8) reject the `temperature` parameter.
+   */
   temperature?: number;
   jsonResponse?: boolean;
 };
@@ -31,7 +35,7 @@ export async function callLabelboxModel({
   system,
   user,
   model = CLIENT_AGENT_MODEL,
-  temperature = 0,
+  temperature,
   jsonResponse = true,
 }: CallOptions): Promise<string> {
   const apiKey = requireEnv("LABELBOX_API_KEY");
@@ -52,7 +56,7 @@ export async function callLabelboxModel({
     body: JSON.stringify({
       model,
       messages,
-      temperature,
+      ...(typeof temperature === "number" ? { temperature } : {}),
       ...(jsonResponse ? { response_format: { type: "json_object" } } : {}),
     }),
   });
