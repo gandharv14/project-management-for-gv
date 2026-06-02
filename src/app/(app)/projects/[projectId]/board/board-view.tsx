@@ -1,13 +1,21 @@
 "use client";
 
 import * as React from "react";
-import { CalendarClock, CheckCircle2, Eye, EyeOff, Repeat, ShieldAlert } from "lucide-react";
+import { CalendarClock, CheckCircle2, Eye, EyeOff, Maximize2, Repeat, ShieldAlert } from "lucide-react";
 
 import { createBlocker, updateTaskStatus } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
 import { FormSubmitButton } from "@/components/form-submit-button";
+import { MarkdownBody } from "@/components/markdown-body";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -101,12 +109,22 @@ function TaskColumn({
 }
 
 function TaskCard({ columns, projectId, task }: { columns: Column[]; projectId: string; task: Task }) {
+  const [detailOpen, setDetailOpen] = React.useState(false);
+
   return (
     <div className="min-w-0 rounded-lg border bg-background p-3 shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="font-medium leading-snug">{task.title}</h3>
-          {task.description ? <p className="mt-1 text-sm text-muted-foreground">{task.description}</p> : null}
+          <button
+            className="block w-full text-left font-medium leading-snug outline-none hover:text-primary focus-visible:text-primary"
+            onClick={() => setDetailOpen(true)}
+            type="button"
+          >
+            {task.title}
+          </button>
+          {task.description ? (
+            <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{task.description}</p>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {task.recurring_rule_id ? (
@@ -115,9 +133,20 @@ function TaskCard({ columns, projectId, task }: { columns: Column[]; projectId: 
               recurring
             </Badge>
           ) : null}
+          <Button
+            aria-label={`Expand ${task.title}`}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={() => setDetailOpen(true)}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <Maximize2 aria-hidden="true" className="h-4 w-4" />
+          </Button>
           <DeleteTaskButton projectId={projectId} taskId={task.id} taskTitle={task.title} />
         </div>
       </div>
+      <TaskDetailDialog columns={columns} onOpenChange={setDetailOpen} open={detailOpen} task={task} />
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
         <span>{task.assignee?.display_name ?? "Unassigned"}</span>
         <span className="flex items-center gap-1">
@@ -165,5 +194,61 @@ function TaskCard({ columns, projectId, task }: { columns: Column[]; projectId: 
         </details>
       )}
     </div>
+  );
+}
+
+function TaskDetailDialog({
+  columns,
+  onOpenChange,
+  open,
+  task,
+}: {
+  columns: Column[];
+  onOpenChange: (open: boolean) => void;
+  open: boolean;
+  task: Task;
+}) {
+  const statusLabel = columns.find((column) => column.id === task.status)?.label ?? task.status;
+
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="pr-6">{task.title}</DialogTitle>
+          <DialogDescription className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">{statusLabel}</Badge>
+            {task.recurring_rule_id ? (
+              <Badge variant="outline">
+                <Repeat className="mr-1 h-3 w-3" />
+                recurring
+              </Badge>
+            ) : null}
+          </DialogDescription>
+        </DialogHeader>
+
+        <dl className="grid grid-cols-2 gap-3 text-sm">
+          <div className="grid gap-1">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Assignee</dt>
+            <dd>{task.assignee?.display_name ?? "Unassigned"}</dd>
+          </div>
+          <div className="grid gap-1">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Due date</dt>
+            <dd className="flex items-center gap-1">
+              <CalendarClock className="h-3 w-3" />
+              {formatDate(task.due_date)}
+            </dd>
+          </div>
+        </dl>
+
+        <div className="grid gap-1">
+          <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Description</h4>
+          {task.description ? (
+            <MarkdownBody content={task.description} />
+          ) : (
+            <p className="text-sm text-muted-foreground">No description provided.</p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
