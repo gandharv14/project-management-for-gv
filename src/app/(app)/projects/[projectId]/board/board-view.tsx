@@ -1,7 +1,22 @@
 "use client";
 
 import * as React from "react";
-import { CalendarClock, CheckCircle2, Eye, EyeOff, Maximize2, Pencil, Repeat, ShieldAlert, UserPlus } from "lucide-react";
+import Image from "next/image";
+import Link from "next/link";
+import {
+  CalendarClock,
+  CheckCircle2,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  ImageIcon,
+  LinkIcon,
+  Maximize2,
+  Pencil,
+  Repeat,
+  ShieldAlert,
+  UserPlus,
+} from "lucide-react";
 
 import { createBlocker, updateTaskStatus } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
@@ -30,6 +45,15 @@ import { EditTaskDialog } from "./edit-task-dialog";
 type Column = { id: TaskStatus; label: string };
 
 const UNASSIGNED_FILTER = "__unassigned__";
+
+function referenceLinkLabel(url: string, index: number) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.replace(/^www\./, "") || `Link ${index + 1}`;
+  } catch {
+    return `Link ${index + 1}`;
+  }
+}
 
 type BoardViewProps = {
   projectId: string;
@@ -167,6 +191,8 @@ function TaskCard({
 }) {
   const [detailOpen, setDetailOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
+  const imageUrls = task.image_urls ?? [];
+  const referenceLinks = task.reference_links ?? [];
 
   return (
     <div className="min-w-0 rounded-lg border bg-background p-3 shadow-sm">
@@ -188,6 +214,18 @@ function TaskCard({
             <Badge variant="outline">
               <Repeat className="mr-1 h-3 w-3" />
               recurring
+            </Badge>
+          ) : null}
+          {referenceLinks.length > 0 ? (
+            <Badge aria-label={`${referenceLinks.length} associated links`} variant="secondary">
+              <LinkIcon className="mr-1 h-3 w-3" />
+              {referenceLinks.length}
+            </Badge>
+          ) : null}
+          {imageUrls.length > 0 ? (
+            <Badge aria-label={`${imageUrls.length} attached images`} variant="secondary">
+              <ImageIcon className="mr-1 h-3 w-3" />
+              {imageUrls.length}
             </Badge>
           ) : null}
           <Button
@@ -302,6 +340,8 @@ function TaskDetailDialog({
   viewerRole: ProfileRole;
 }) {
   const statusLabel = columns.find((column) => column.id === task.status)?.label ?? task.status;
+  const imageUrls = task.image_urls ?? [];
+  const referenceLinks = task.reference_links ?? [];
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -355,6 +395,47 @@ function TaskDetailDialog({
             <p className="text-sm text-muted-foreground">No description provided.</p>
           )}
         </div>
+
+        {referenceLinks.length > 0 ? (
+          <div className="grid gap-2">
+            <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Associated links</h4>
+            <div className="flex flex-wrap gap-2">
+              {referenceLinks.map((url, index) => (
+                <Button asChild key={`${url}-${index}`} size="sm" variant="outline">
+                  <Link href={url} rel="noreferrer" target="_blank">
+                    <ExternalLink className="h-4 w-4" />
+                    {referenceLinkLabel(url, index)}
+                  </Link>
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {imageUrls.length > 0 ? (
+          <div className="grid gap-2">
+            <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Images / screenshots</h4>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {imageUrls.map((url, index) => (
+                <Link
+                  className="block overflow-hidden rounded-lg border bg-muted"
+                  href={url}
+                  key={`${url}-${index}`}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <Image
+                    alt={`Task screenshot ${index + 1}`}
+                    className="h-36 w-full object-cover"
+                    height={144}
+                    src={url}
+                    width={256}
+                  />
+                </Link>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {viewerRole === "manager" ? <ClientTicketAgent task={task} /> : null}
       </DialogContent>

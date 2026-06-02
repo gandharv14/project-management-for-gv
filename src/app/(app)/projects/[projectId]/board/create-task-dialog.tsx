@@ -73,6 +73,26 @@ export function CreateTaskDialog({ projectId, members, columns }: CreateTaskDial
               className="min-h-20"
             />
           </Field>
+          <Field htmlFor="task-reference-links" label="Associated links">
+            <Textarea
+              className="min-h-16"
+              id="task-reference-links"
+              name="referenceLinks"
+              placeholder="https://example.com/design-review&#10;https://example.com/error-log"
+            />
+          </Field>
+          <Field htmlFor="task-screenshots" label="Images / screenshots">
+            <Input
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              id="task-screenshots"
+              multiple
+              name="screenshots"
+              type="file"
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            Add one link per line. Upload up to 4 PNG, JPEG, WebP, or GIF images, 5MB each.
+          </p>
           <Field htmlFor="task-assignee" label="Assignee">
             <Select id="task-assignee" name="assigneeId" defaultValue="">
               <option value="">Unassigned</option>

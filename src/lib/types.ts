@@ -2,6 +2,7 @@ export const TASK_STATUSES = ["backlog", "today", "in_progress", "blocked", "don
 export const BLOCKER_STATUSES = ["open", "acknowledged", "resolved"] as const;
 export const SUGGESTION_STATUSES = ["open", "under_consideration", "accepted", "parked"] as const;
 export const SUGGESTION_CATEGORIES = ["proposal", "project", "management", "process", "tooling", "other"] as const;
+export const PROJECT_DOCUMENT_TYPES = ["doc", "sheet", "slide", "folder", "other"] as const;
 export const RECURRENCE_FREQUENCIES = ["daily", "weekly", "custom"] as const;
 export const FLAG_STAGES = ["flagged", "warned", "remove_requested", "removed"] as const;
 
@@ -9,6 +10,7 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type BlockerStatus = (typeof BLOCKER_STATUSES)[number];
 export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number];
 export type SuggestionCategory = (typeof SUGGESTION_CATEGORIES)[number];
+export type ProjectDocumentType = (typeof PROJECT_DOCUMENT_TYPES)[number];
 export type RecurrenceFrequency = (typeof RECURRENCE_FREQUENCIES)[number];
 export type FlagStage = (typeof FLAG_STAGES)[number];
 export type ProfileRole = "manager" | "member";
@@ -74,12 +76,28 @@ export type ProjectUserFlagEvent = {
   actor?: Profile | null;
 };
 
+export type ProjectDocument = {
+  id: string;
+  project_id: string;
+  title: string;
+  url: string;
+  document_type: ProjectDocumentType;
+  tags: string[];
+  description: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  creator?: Profile | null;
+};
+
 export type Task = {
   id: string;
   project_id: string;
   recurring_rule_id: string | null;
   title: string;
   description: string | null;
+  image_urls: string[];
+  reference_links: string[];
   status: TaskStatus;
   assignee_id: string | null;
   due_date: string | null;

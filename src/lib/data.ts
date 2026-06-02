@@ -13,6 +13,8 @@ import {
   type ProfileMembershipScope,
   type ProfileRole,
   type Project,
+  type ProjectDocument,
+  type ProjectDocumentType,
   type ProjectMember,
   type ProjectUserFlag,
   type ProjectUserFlagEvent,
@@ -642,6 +644,62 @@ export async function getProjectUserFlagsState(projectId: string) {
   return {
     flags,
     setupRequired: false,
+  };
+}
+
+export async function getProjectDocumentsState(
+  projectId: string,
+  filters?: { documentType?: ProjectDocumentType; tag?: string },
+) {
+  const { data, error } = await getSupabaseAdmin()
+    .from("project_documents")
+    .select("*, creator:profiles!project_documents_created_by_fkey(*)")
+    .eq("project_id", projectId)
+    .order("updated_at", { ascending: false });
+
+  if (isMissingRelation(error, "project_documents")) {
+    return {
+      documents: [],
+      setupRequired: true,
+      tagCounts: new Map<string, number>(),
+      totalCount: 0,
+      typeCounts: new Map<ProjectDocumentType, number>(),
+    };
+  }
+
+  const documents = assertDb<ProjectDocument[]>(data, error).map((document) => ({
+    ...document,
+    tags: document.tags ?? [],
+  }));
+  const tagCounts = new Map<string, number>();
+  const typeCounts = new Map<ProjectDocumentType, number>();
+
+  for (const document of documents) {
+    typeCounts.set(document.document_type, (typeCounts.get(document.document_type) ?? 0) + 1);
+
+    for (const tag of document.tags) {
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+    }
+  }
+
+  const filteredDocuments = documents.filter((document) => {
+    if (filters?.documentType && document.document_type !== filters.documentType) {
+      return false;
+    }
+
+    if (filters?.tag && !document.tags.includes(filters.tag)) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return {
+    documents: filteredDocuments,
+    setupRequired: false,
+    tagCounts,
+    totalCount: documents.length,
+    typeCounts,
   };
 }
 

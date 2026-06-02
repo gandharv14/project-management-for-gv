@@ -73,6 +73,27 @@ export function EditTaskDialog({
               placeholder="Context, links, acceptance criteria"
             />
           </Field>
+          <Field htmlFor="edit-task-reference-links" label="Associated links">
+            <Textarea
+              className="min-h-16"
+              defaultValue={(task.reference_links ?? []).join("\n")}
+              id="edit-task-reference-links"
+              name="referenceLinks"
+              placeholder="https://example.com/design-review&#10;https://example.com/error-log"
+            />
+          </Field>
+          <Field htmlFor="edit-task-screenshots" label="Add images / screenshots">
+            <Input
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              id="edit-task-screenshots"
+              multiple
+              name="screenshots"
+              type="file"
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            Add one link per line. New uploads are appended to existing screenshots.
+          </p>
           <Field htmlFor="edit-task-assignee" label="Assignee">
             <Select defaultValue={task.assignee_id ?? ""} id="edit-task-assignee" name="assigneeId">
               <option value="">Unassigned</option>

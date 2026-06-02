@@ -9,7 +9,7 @@ import { callLabelboxModel } from "@/lib/llm";
 import { recurringRunDatesUpTo } from "@/lib/recurrence";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { httpUrlSchema } from "@/lib/validation";
-import { FLAG_STAGES, SUGGESTION_CATEGORIES } from "@/lib/types";
+import { FLAG_STAGES, PROJECT_DOCUMENT_TYPES, SUGGESTION_CATEGORIES } from "@/lib/types";
 import type {
   BlockerStatus,
   FlagStage,
@@ -24,6 +24,8 @@ import type {
 const profileRoleSchema = z.enum(["manager", "member"]);
 const profileMembershipScopeSchema = z.enum(["workspace", "project"]);
 const suggestionCategorySchema = z.enum(SUGGESTION_CATEGORIES);
+const projectDocumentTypeSchema = z.enum(PROJECT_DOCUMENT_TYPES);
+const projectDocumentHosts = new Set(["docs.google.com", "drive.google.com"]);
 const suggestionImageTypes = new Map([
   ["image/png", "png"],
   ["image/jpeg", "jpg"],
@@ -32,6 +34,7 @@ const suggestionImageTypes = new Map([
 ]);
 const suggestionScreenshotBucket = "suggestion-screenshots";
 const flagScreenshotBucket = "flag-screenshots";
+const taskScreenshotBucket = "task-screenshots";
 const maxSuggestionImagesPerSubmit = 4;
 const maxSuggestionImageBytes = 5 * 1024 * 1024;
 
@@ -41,6 +44,47 @@ function text(formData: FormData, key: string) {
     Array.from(formData.entries()).find(([entryKey]) => entryKey.endsWith(`_${key}`))?.[1];
 
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function multilineText(formData: FormData, key: string) {
+  return (
+    text(formData, key)
+      ?.split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean) ?? []
+  );
+}
+
+function taskReferenceLinks(formData: FormData) {
+  return multilineText(formData, "referenceLinks").map((link) => httpUrlSchema.parse(link));
+}
+
+function googleWorkspaceUrl(value: string) {
+  const url = httpUrlSchema.parse(value);
+  const hostname = new URL(url).hostname.toLowerCase();
+
+  if (!projectDocumentHosts.has(hostname)) {
+    throw new Error("Document link must be a Google Docs, Sheets, Slides, or Drive URL.");
+  }
+
+  return url;
+}
+
+function projectDocumentTags(formData: FormData) {
+  const tags = (text(formData, "tags") ?? "")
+    .split(/[,\n]/)
+    .map((tag) =>
+      tag
+        .trim()
+        .toLowerCase()
+        .replace(/&/g, "and")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40),
+    )
+    .filter(Boolean);
+
+  return [...new Set(tags)].slice(0, 12);
 }
 
 function isUploadedFile(value: FormDataEntryValue): value is File {
@@ -129,6 +173,32 @@ async function uploadFlagScreenshots(input: { projectId: string; flagId: string;
       }
 
       const { data } = supabase.storage.from(flagScreenshotBucket).getPublicUrl(objectPath);
+      return data.publicUrl;
+    }),
+  );
+}
+
+async function uploadTaskScreenshots(input: { projectId: string; taskId: string; files: File[] }) {
+  if (input.files.length === 0) {
+    return [];
+  }
+
+  const supabase = getSupabaseAdmin();
+
+  return Promise.all(
+    input.files.map(async (file) => {
+      const extension = suggestionImageTypes.get(file.type);
+      const objectPath = `${input.projectId}/${input.taskId}/${crypto.randomUUID()}.${extension}`;
+      const { error } = await supabase.storage.from(taskScreenshotBucket).upload(objectPath, file, {
+        contentType: file.type,
+        upsert: false,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      const { data } = supabase.storage.from(taskScreenshotBucket).getPublicUrl(objectPath);
       return data.publicUrl;
     }),
   );
@@ -714,6 +784,9 @@ export async function createTask(formData: FormData) {
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
   const title = text(formData, "title");
   const assigneeId = text(formData, "assigneeId");
+  const screenshotFiles = suggestionScreenshotFiles(formData);
+  const referenceLinks = taskReferenceLinks(formData);
+  const status = (text(formData, "status") ?? "backlog") as TaskStatus;
 
   if (!title) {
     return;
@@ -721,13 +794,21 @@ export async function createTask(formData: FormData) {
 
   await requireProjectAccess(profile, projectId);
 
-  const status = (text(formData, "status") ?? "backlog") as TaskStatus;
+  const taskId = crypto.randomUUID();
+  const screenshotUrls = await uploadTaskScreenshots({
+    projectId,
+    taskId,
+    files: screenshotFiles,
+  });
   const { data: task, error } = await getSupabaseAdmin()
     .from("tasks")
     .insert({
+      id: taskId,
       project_id: projectId,
       title,
       description: text(formData, "description"),
+      image_urls: screenshotUrls,
+      reference_links: referenceLinks,
       assignee_id: assigneeId,
       due_date: text(formData, "dueDate"),
       status,
@@ -769,7 +850,7 @@ export async function updateTask(formData: FormData) {
   const supabase = getSupabaseAdmin();
   const { data: existing, error: existingError } = await supabase
     .from("tasks")
-    .select("assignee_id")
+    .select("assignee_id, image_urls")
     .eq("id", taskId)
     .eq("project_id", projectId)
     .maybeSingle();
@@ -783,15 +864,25 @@ export async function updateTask(formData: FormData) {
   }
 
   const assigneeId = text(formData, "assigneeId");
+  const screenshotFiles = suggestionScreenshotFiles(formData);
+  const referenceLinks = taskReferenceLinks(formData);
   const status = z
     .enum(["backlog", "today", "in_progress", "blocked", "done"])
     .parse(text(formData, "status") ?? "backlog") as TaskStatus;
+  const screenshotUrls = await uploadTaskScreenshots({
+    projectId,
+    taskId,
+    files: screenshotFiles,
+  });
+  const existingImageUrls = Array.isArray(existing.image_urls) ? existing.image_urls : [];
 
   const { error } = await supabase
     .from("tasks")
     .update({
       title,
       description: text(formData, "description"),
+      image_urls: [...existingImageUrls, ...screenshotUrls],
+      reference_links: referenceLinks,
       assignee_id: assigneeId,
       due_date: text(formData, "dueDate"),
       status,
@@ -1082,6 +1173,55 @@ export async function createProjectUserFlag(formData: FormData) {
   }
 
   revalidatePath(`/projects/${projectId}/flags`);
+}
+
+export async function createProjectDocument(formData: FormData) {
+  const profile = await ensureCurrentProfile();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const title = text(formData, "title");
+  const urlValue = text(formData, "url");
+
+  if (!title || !urlValue) {
+    return;
+  }
+
+  await requireProjectAccess(profile, projectId);
+
+  const { error } = await getSupabaseAdmin().from("project_documents").insert({
+    project_id: projectId,
+    title,
+    url: googleWorkspaceUrl(urlValue),
+    document_type: projectDocumentTypeSchema.parse(text(formData, "documentType") ?? "doc"),
+    tags: projectDocumentTags(formData),
+    description: text(formData, "description"),
+    created_by: profile.id,
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidatePath(`/projects/${projectId}/documents`);
+}
+
+export async function deleteProjectDocument(formData: FormData) {
+  const profile = await ensureCurrentProfile();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const documentId = z.string().uuid().parse(text(formData, "documentId"));
+
+  await requireProjectAccess(profile, projectId);
+
+  const { error } = await getSupabaseAdmin()
+    .from("project_documents")
+    .delete()
+    .eq("id", documentId)
+    .eq("project_id", projectId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidatePath(`/projects/${projectId}/documents`);
 }
 
 // Forward-only stage progression for flagged users. Coordinators (members) can
@@ -1805,15 +1945,18 @@ Respond with ONLY a JSON object, no markdown, matching exactly this shape:
 Rules:
 - "reason": one short sentence explaining your decision.
 - If "is_client_facing" is false, set "message" to null.
-- If "is_client_facing" is true, set "message" to a clean, professional, copy-paste-ready message addressed to the client. It MUST use exactly this two-section format with these literal labels, each on its own line:
+- If "is_client_facing" is true, set "message" to a clean, professional, copy-paste-ready message addressed to the client. It MUST use exactly this three-section format with these literal labels, each on its own line:
 
 Description:
 <a clear, concise description of the issue/request rewritten for the client>
 
-Relevant Link or UUID:
-<any link or UUID found in the task content, or "No relevant link or UUID provided" if none>
+Relevant Links or UUIDs:
+<any links or UUIDs found in the task content, or "No relevant link or UUID provided" if none>
 
-- Do not invent links or UUIDs. Only extract ones present in the task content.
+Images / Screenshots:
+<any screenshot URLs found in the task content, or "No images or screenshots provided" if none>
+
+- Do not invent links, UUIDs, or screenshot URLs. Only extract ones present in the task content.
 - Keep the message professional and free of internal jargon.`;
 
 function clientTicketError(message: string): ClientTicketDraft {
@@ -1834,7 +1977,7 @@ export async function draftClientTicketMessage(taskId: string): Promise<ClientTi
   try {
     const { data: task, error } = await getSupabaseAdmin()
       .from("tasks")
-      .select("title, description")
+      .select("title, description, reference_links, image_urls")
       .eq("id", parsedId.data)
       .single();
 
@@ -1842,7 +1985,18 @@ export async function draftClientTicketMessage(taskId: string): Promise<ClientTi
       return clientTicketError(`Could not load the task: ${error.message}`);
     }
 
-    const userPrompt = `Task title: ${task.title}\n\nTask description:\n${task.description ?? "(no description provided)"}`;
+    const referenceLinks = Array.isArray(task.reference_links) ? task.reference_links.join("\n") : "";
+    const imageUrls = Array.isArray(task.image_urls) ? task.image_urls.join("\n") : "";
+    const userPrompt = `Task title: ${task.title}
+
+Task description:
+${task.description ?? "(no description provided)"}
+
+Task reference links:
+${referenceLinks || "(no reference links provided)"}
+
+Task images / screenshots:
+${imageUrls || "(no images or screenshots provided)"}`;
 
     const raw = await callLabelboxModel({
       system: CLIENT_TICKET_SYSTEM_PROMPT,
