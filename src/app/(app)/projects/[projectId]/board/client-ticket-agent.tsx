@@ -20,6 +20,13 @@ export function ClientTicketAgent({ task }: { task: Task }) {
     startTransition(async () => {
       try {
         const result = await draftClientTicketMessage(task.id);
+
+        if (result.error) {
+          setDraft(null);
+          setError(result.error);
+          return;
+        }
+
         setDraft(result);
       } catch (caught) {
         setDraft(null);

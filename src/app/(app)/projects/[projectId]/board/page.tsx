@@ -54,7 +54,7 @@ export default async function BoardPage({ params }: { params: Promise<{ projectI
         <CreateTaskDialog columns={columns} members={members} projectId={projectId} />
       </div>
 
-      <BoardView columns={columns} projectId={projectId} tasks={tasks} viewerRole={profile.role} />
+      <BoardView columns={columns} members={members} projectId={projectId} tasks={tasks} viewerRole={profile.role} />
 
       <Card>
         <CardHeader>

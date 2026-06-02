@@ -754,6 +754,73 @@ export async function createTask(formData: FormData) {
   revalidatePath("/today");
 }
 
+export async function updateTask(formData: FormData) {
+  const profile = await ensureCurrentProfile();
+  const projectId = z.string().uuid().parse(text(formData, "projectId"));
+  const taskId = z.string().uuid().parse(text(formData, "taskId"));
+  const title = text(formData, "title");
+
+  if (!title) {
+    return;
+  }
+
+  await requireProjectAccess(profile, projectId);
+
+  const supabase = getSupabaseAdmin();
+  const { data: existing, error: existingError } = await supabase
+    .from("tasks")
+    .select("assignee_id")
+    .eq("id", taskId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(existingError.message);
+  }
+
+  if (!existing) {
+    throw new Error("Task not found");
+  }
+
+  const assigneeId = text(formData, "assigneeId");
+  const status = z
+    .enum(["backlog", "today", "in_progress", "blocked", "done"])
+    .parse(text(formData, "status") ?? "backlog") as TaskStatus;
+
+  const { error } = await supabase
+    .from("tasks")
+    .update({
+      title,
+      description: text(formData, "description"),
+      assignee_id: assigneeId,
+      due_date: text(formData, "dueDate"),
+      status,
+      completed_at: status === "done" ? new Date().toISOString() : null,
+    })
+    .eq("id", taskId)
+    .eq("project_id", projectId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (assigneeId && assigneeId !== existing.assignee_id) {
+    await notify({
+      profileId: assigneeId,
+      actorId: profile.id,
+      type: "assignment_created",
+      title: "Task assigned to you",
+      body: title,
+      href: `/projects/${projectId}/board`,
+      taskId,
+    });
+  }
+
+  revalidatePath(`/projects/${projectId}/board`);
+  revalidatePath("/today");
+  revalidatePath("/manager");
+}
+
 export async function updateTaskStatus(formData: FormData) {
   const profile = await ensureCurrentProfile();
   const projectId = z.string().uuid().parse(text(formData, "projectId"));
@@ -1715,6 +1782,7 @@ export type ClientTicketDraft = {
   isClientFacing: boolean;
   reason: string;
   message: string | null;
+  error: string | null;
 };
 
 const clientTicketDraftSchema = z.object({
@@ -1748,41 +1816,60 @@ Relevant Link or UUID:
 - Do not invent links or UUIDs. Only extract ones present in the task content.
 - Keep the message professional and free of internal jargon.`;
 
+function clientTicketError(message: string): ClientTicketDraft {
+  return { isClientFacing: false, reason: "", message: null, error: message };
+}
+
 export async function draftClientTicketMessage(taskId: string): Promise<ClientTicketDraft> {
   await requireManager();
 
-  const id = z.string().uuid().parse(taskId);
+  const parsedId = z.string().uuid().safeParse(taskId);
 
-  const { data: task, error } = await getSupabaseAdmin()
-    .from("tasks")
-    .select("title, description")
-    .eq("id", id)
-    .single();
-
-  if (error) {
-    throw new Error(error.message);
+  if (!parsedId.success) {
+    return clientTicketError("Invalid task reference.");
   }
 
-  const userPrompt = `Task title: ${task.title}\n\nTask description:\n${task.description ?? "(no description provided)"}`;
-
-  const raw = await callLabelboxModel({
-    system: CLIENT_TICKET_SYSTEM_PROMPT,
-    user: userPrompt,
-  });
-
-  let parsed: unknown;
-
+  // Errors are returned (not thrown) so the real cause is visible in the UI.
+  // Thrown server-action errors are sanitized to a generic digest in production.
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("The agent returned a response that could not be parsed. Please try again.");
+    const { data: task, error } = await getSupabaseAdmin()
+      .from("tasks")
+      .select("title, description")
+      .eq("id", parsedId.data)
+      .single();
+
+    if (error) {
+      return clientTicketError(`Could not load the task: ${error.message}`);
+    }
+
+    const userPrompt = `Task title: ${task.title}\n\nTask description:\n${task.description ?? "(no description provided)"}`;
+
+    const raw = await callLabelboxModel({
+      system: CLIENT_TICKET_SYSTEM_PROMPT,
+      user: userPrompt,
+    });
+
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return clientTicketError("The agent returned a response that could not be parsed. Please try again.");
+    }
+
+    const result = clientTicketDraftSchema.safeParse(parsed);
+
+    if (!result.success) {
+      return clientTicketError("The agent returned an unexpected response. Please try again.");
+    }
+
+    return {
+      isClientFacing: result.data.is_client_facing,
+      reason: result.data.reason,
+      message: result.data.is_client_facing ? result.data.message : null,
+      error: null,
+    };
+  } catch (caught) {
+    return clientTicketError(caught instanceof Error ? caught.message : "The agent request failed. Please try again.");
   }
-
-  const result = clientTicketDraftSchema.parse(parsed);
-
-  return {
-    isClientFacing: result.is_client_facing,
-    reason: result.reason,
-    message: result.is_client_facing ? result.message : null,
-  };
 }

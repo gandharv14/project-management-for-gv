@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { CalendarClock, CheckCircle2, Eye, EyeOff, Maximize2, Repeat, ShieldAlert, UserPlus } from "lucide-react";
+import { CalendarClock, CheckCircle2, Eye, EyeOff, Maximize2, Pencil, Repeat, ShieldAlert, UserPlus } from "lucide-react";
 
 import { createBlocker, updateTaskStatus } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
@@ -17,38 +17,67 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { ProfileRole, Task, TaskStatus } from "@/lib/types";
+import type { ProfileRole, ProjectMember, Task, TaskStatus } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
 import { ClientTicketAgent } from "./client-ticket-agent";
 import { DeleteTaskButton } from "./delete-task-button";
+import { EditTaskDialog } from "./edit-task-dialog";
 
 type Column = { id: TaskStatus; label: string };
+
+const UNASSIGNED_FILTER = "__unassigned__";
 
 type BoardViewProps = {
   projectId: string;
   columns: Column[];
   tasks: Task[];
+  members: ProjectMember[];
   viewerRole: ProfileRole;
 };
 
-export function BoardView({ projectId, columns, tasks, viewerRole }: BoardViewProps) {
+export function BoardView({ projectId, columns, tasks, members, viewerRole }: BoardViewProps) {
   const [showRecurring, setShowRecurring] = React.useState(true);
+  const [assigneeFilter, setAssigneeFilter] = React.useState<string>("all");
 
   const recurringCount = React.useMemo(
     () => tasks.filter((task) => task.recurring_rule_id).length,
     [tasks],
   );
-  const visibleTasks = React.useMemo(
-    () => (showRecurring ? tasks : tasks.filter((task) => !task.recurring_rule_id)),
-    [showRecurring, tasks],
-  );
+  const visibleTasks = React.useMemo(() => {
+    let next = showRecurring ? tasks : tasks.filter((task) => !task.recurring_rule_id);
+
+    if (assigneeFilter === UNASSIGNED_FILTER) {
+      next = next.filter((task) => !task.assignee_id);
+    } else if (assigneeFilter !== "all") {
+      next = next.filter((task) => task.assignee_id === assigneeFilter);
+    }
+
+    return next;
+  }, [assigneeFilter, showRecurring, tasks]);
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-end">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="grid w-full max-w-xs gap-2 sm:w-auto">
+          <Label htmlFor="board-assignee-filter">Filter by assignee</Label>
+          <Select
+            id="board-assignee-filter"
+            onChange={(event) => setAssigneeFilter(event.target.value)}
+            value={assigneeFilter}
+          >
+            <option value="all">All assignees</option>
+            <option value={UNASSIGNED_FILTER}>Unassigned</option>
+            {members.map((member) => (
+              <option key={member.profile_id} value={member.profile_id}>
+                {member.profiles?.display_name ?? member.profile_id}
+              </option>
+            ))}
+          </Select>
+        </div>
         <Button
           aria-pressed={showRecurring}
           onClick={() => setShowRecurring((value) => !value)}
@@ -71,6 +100,7 @@ export function BoardView({ projectId, columns, tasks, viewerRole }: BoardViewPr
               key={column.id}
               column={column}
               columns={columns}
+              members={members}
               projectId={projectId}
               tasks={visibleTasks.filter((task) => task.status === column.id)}
               viewerRole={viewerRole}
@@ -85,12 +115,14 @@ export function BoardView({ projectId, columns, tasks, viewerRole }: BoardViewPr
 function TaskColumn({
   column,
   columns,
+  members,
   projectId,
   tasks,
   viewerRole,
 }: {
   column: Column;
   columns: Column[];
+  members: ProjectMember[];
   projectId: string;
   tasks: Task[];
   viewerRole: ProfileRole;
@@ -103,7 +135,14 @@ function TaskColumn({
       </div>
       <div className="grid gap-3 p-4">
         {tasks.map((task) => (
-          <TaskCard key={task.id} columns={columns} projectId={projectId} task={task} viewerRole={viewerRole} />
+          <TaskCard
+            key={task.id}
+            columns={columns}
+            members={members}
+            projectId={projectId}
+            task={task}
+            viewerRole={viewerRole}
+          />
         ))}
         {tasks.length === 0 ? (
           <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">No tasks</p>
@@ -115,16 +154,19 @@ function TaskColumn({
 
 function TaskCard({
   columns,
+  members,
   projectId,
   task,
   viewerRole,
 }: {
   columns: Column[];
+  members: ProjectMember[];
   projectId: string;
   task: Task;
   viewerRole: ProfileRole;
 }) {
   const [detailOpen, setDetailOpen] = React.useState(false);
+  const [editOpen, setEditOpen] = React.useState(false);
 
   return (
     <div className="min-w-0 rounded-lg border bg-background p-3 shadow-sm">
@@ -149,6 +191,16 @@ function TaskCard({
             </Badge>
           ) : null}
           <Button
+            aria-label={`Edit ${task.title}`}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={() => setEditOpen(true)}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <Pencil aria-hidden="true" className="h-4 w-4" />
+          </Button>
+          <Button
             aria-label={`Expand ${task.title}`}
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
             onClick={() => setDetailOpen(true)}
@@ -163,10 +215,22 @@ function TaskCard({
       </div>
       <TaskDetailDialog
         columns={columns}
+        onEdit={() => {
+          setDetailOpen(false);
+          setEditOpen(true);
+        }}
         onOpenChange={setDetailOpen}
         open={detailOpen}
         task={task}
         viewerRole={viewerRole}
+      />
+      <EditTaskDialog
+        columns={columns}
+        members={members}
+        onOpenChange={setEditOpen}
+        open={editOpen}
+        projectId={projectId}
+        task={task}
       />
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
         <span>{task.assignee?.display_name ?? "Unassigned"}</span>
@@ -224,12 +288,14 @@ function TaskCard({
 
 function TaskDetailDialog({
   columns,
+  onEdit,
   onOpenChange,
   open,
   task,
   viewerRole,
 }: {
   columns: Column[];
+  onEdit: () => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
   task: Task;
@@ -252,6 +318,13 @@ function TaskDetailDialog({
             ) : null}
           </DialogDescription>
         </DialogHeader>
+
+        <div className="flex justify-end">
+          <Button onClick={onEdit} size="sm" type="button" variant="outline">
+            <Pencil className="h-4 w-4" />
+            Edit task
+          </Button>
+        </div>
 
         <dl className="grid grid-cols-2 gap-3 text-sm">
           <div className="grid gap-1">
