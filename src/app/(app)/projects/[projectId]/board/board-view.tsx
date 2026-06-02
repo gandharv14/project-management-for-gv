@@ -161,7 +161,13 @@ function TaskCard({
           <DeleteTaskButton projectId={projectId} taskId={task.id} taskTitle={task.title} />
         </div>
       </div>
-      <TaskDetailDialog columns={columns} onOpenChange={setDetailOpen} open={detailOpen} task={task} />
+      <TaskDetailDialog
+        columns={columns}
+        onOpenChange={setDetailOpen}
+        open={detailOpen}
+        task={task}
+        viewerRole={viewerRole}
+      />
       <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
         <span>{task.assignee?.display_name ?? "Unassigned"}</span>
         <span className="flex items-center gap-1">
@@ -221,11 +227,13 @@ function TaskDetailDialog({
   onOpenChange,
   open,
   task,
+  viewerRole,
 }: {
   columns: Column[];
   onOpenChange: (open: boolean) => void;
   open: boolean;
   task: Task;
+  viewerRole: ProfileRole;
 }) {
   const statusLabel = columns.find((column) => column.id === task.status)?.label ?? task.status;
 
@@ -274,6 +282,8 @@ function TaskDetailDialog({
             <p className="text-sm text-muted-foreground">No description provided.</p>
           )}
         </div>
+
+        {viewerRole === "manager" ? <ClientTicketAgent task={task} /> : null}
       </DialogContent>
     </Dialog>
   );

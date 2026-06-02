@@ -28,7 +28,7 @@ const columns: Array<{ id: TaskStatus; label: string }> = [
 
 export default async function BoardPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
-  const { activeProject } = await getAppContext(projectId);
+  const { activeProject, profile } = await getAppContext(projectId);
 
   if (!activeProject) {
     return <EmptyProjectState />;
@@ -54,7 +54,7 @@ export default async function BoardPage({ params }: { params: Promise<{ projectI
         <CreateTaskDialog columns={columns} members={members} projectId={projectId} />
       </div>
 
-      <BoardView columns={columns} projectId={projectId} tasks={tasks} />
+      <BoardView columns={columns} projectId={projectId} tasks={tasks} viewerRole={profile.role} />
 
       <Card>
         <CardHeader>
