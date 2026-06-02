@@ -763,14 +763,33 @@ export async function updateTaskStatus(formData: FormData) {
 
   await requireProjectAccess(profile, projectId);
 
-  await getSupabaseAdmin()
+  const supabase = getSupabaseAdmin();
+  const { data: updated, error: updateError } = await supabase
     .from("tasks")
     .update({
       status,
       completed_at: status === "done" ? new Date().toISOString() : null,
     })
     .eq("id", taskId)
-    .eq("project_id", projectId);
+    .eq("project_id", projectId)
+    .select("recurring_rule_id, generated_for_date, assignee_id")
+    .maybeSingle();
+
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+
+  // Keep the occurrence history log in sync when a recurring ticket is moved
+  // into or out of the Done column.
+  if (updated?.recurring_rule_id && updated.generated_for_date) {
+    await syncRecurringOccurrence(supabase, {
+      ruleId: updated.recurring_rule_id,
+      projectId,
+      occurrenceDate: updated.generated_for_date,
+      assigneeId: updated.assignee_id,
+      done: status === "done",
+    });
+  }
 
   revalidatePath(`/projects/${projectId}/board`);
   revalidatePath("/today");
@@ -1015,6 +1034,12 @@ export async function updateProjectUserFlagStage(formData: FormData) {
   const note = text(formData, "note") ?? null;
 
   await requireProjectAccess(profile, projectId);
+
+  // Hard guarantee, independent of the transition map below: only a manager can
+  // ever move a flagged user into the removed stage.
+  if (stage === "removed" && profile.role !== "manager") {
+    throw new Error("Only a manager can mark a flagged user as removed.");
+  }
 
   const supabase = getSupabaseAdmin();
   const { data: flag, error: flagError } = await supabase
@@ -1363,6 +1388,33 @@ export async function markAllNotificationsRead() {
   revalidatePath("/", "layout");
 }
 
+type SupabaseAdminClient = ReturnType<typeof getSupabaseAdmin>;
+
+// Records the outcome of a recurring occurrence in the history log. The single
+// live ticket only ever reflects the most recent occurrence, so its completion
+// state is mirrored here per occurrence date.
+async function syncRecurringOccurrence(
+  supabase: SupabaseAdminClient,
+  input: { ruleId: string; projectId: string; occurrenceDate: string; assigneeId: string | null; done: boolean },
+) {
+  const { error } = await supabase.from("recurring_occurrences").upsert(
+    {
+      rule_id: input.ruleId,
+      project_id: input.projectId,
+      occurrence_date: input.occurrenceDate,
+      assignee_id: input.assigneeId,
+      status: input.done ? "done" : "pending",
+      completed_at: input.done ? new Date().toISOString() : null,
+      notified_missed_at: null,
+    },
+    { onConflict: "rule_id,occurrence_date" },
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function generateRecurringInstances() {
   const supabase = getSupabaseAdmin();
   const today = todayISO();
@@ -1379,60 +1431,114 @@ export async function generateRecurringInstances() {
   let createdCount = 0;
 
   for (const rule of rules ?? []) {
-    // Generate an instance for every scheduled occurrence up to today, so a
-    // cron that skipped one or more days catches up instead of advancing a
-    // single period and silently dropping the missed occurrences.
+    // Log every scheduled occurrence up to today, so a cron that skipped one or
+    // more days catches up the history instead of silently dropping the missed
+    // occurrences. ON CONFLICT DO NOTHING keeps existing (possibly completed)
+    // occurrences intact.
     const dueDates = recurringRunDatesUpTo(rule, today);
 
+    if (dueDates.length === 0) {
+      continue;
+    }
+
     for (const dueDate of dueDates) {
+      const { error: occurrenceError } = await supabase.from("recurring_occurrences").upsert(
+        {
+          rule_id: rule.id,
+          project_id: rule.project_id,
+          occurrence_date: dueDate,
+          assignee_id: rule.assignee_id,
+          status: "pending",
+        },
+        { onConflict: "rule_id,occurrence_date", ignoreDuplicates: true },
+      );
+
+      if (occurrenceError) {
+        throw new Error(occurrenceError.message);
+      }
+    }
+
+    const latest = dueDates[dueDates.length - 1];
+
+    // There is at most one live ticket per rule. Create it on first run, or move
+    // it back to "today" when a new cycle begins (it was completed, or it still
+    // points at an older occurrence). A ticket already open for the current
+    // cycle is left wherever the assignee moved it.
+    const { data: existing, error: existingError } = await supabase
+      .from("tasks")
+      .select("id, status, generated_for_date")
+      .eq("recurring_rule_id", rule.id)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new Error(existingError.message);
+    }
+
+    let liveTaskId = existing?.id ?? null;
+    let movedToToday = false;
+
+    if (!existing) {
       const { data: created, error: insertError } = await supabase
         .from("tasks")
-        .upsert(
-          {
-            project_id: rule.project_id,
-            recurring_rule_id: rule.id,
-            title: rule.title,
-            description: rule.description,
-            assignee_id: rule.assignee_id,
-            due_date: dueDate,
-            generated_for_date: dueDate,
-            status: "today",
-            created_by: rule.created_by,
-          },
-          { onConflict: "recurring_rule_id,generated_for_date", ignoreDuplicates: true },
-        )
+        .insert({
+          project_id: rule.project_id,
+          recurring_rule_id: rule.id,
+          title: rule.title,
+          description: rule.description,
+          assignee_id: rule.assignee_id,
+          due_date: latest,
+          generated_for_date: latest,
+          status: "today",
+          created_by: rule.created_by,
+        })
         .select("id")
-        .maybeSingle();
+        .single();
 
       if (insertError) {
         throw new Error(insertError.message);
       }
 
-      // With ignoreDuplicates the upsert is ON CONFLICT DO NOTHING, so it never
-      // resets an already-generated (possibly completed) instance back to
-      // "today". A row is only returned when one was actually created, which is
-      // also the only time we should notify the assignee.
-      if (created) {
-        createdCount += 1;
-        await notify({
-          profileId: rule.assignee_id,
-          actorId: rule.created_by,
-          type: "recurring_task_created",
-          title: "Recurring duty ready",
-          body: rule.title,
-          href: `/projects/${rule.project_id}/board`,
-          taskId: created.id,
-        });
+      liveTaskId = created.id;
+      movedToToday = true;
+    } else if (existing.status === "done" || (existing.generated_for_date ?? "") < latest) {
+      const { error: resetError } = await supabase
+        .from("tasks")
+        .update({
+          title: rule.title,
+          description: rule.description,
+          assignee_id: rule.assignee_id,
+          due_date: latest,
+          generated_for_date: latest,
+          status: "today",
+          completed_at: null,
+          overdue_notified_at: null,
+        })
+        .eq("id", existing.id);
+
+      if (resetError) {
+        throw new Error(resetError.message);
       }
+
+      movedToToday = true;
     }
 
-    if (dueDates.length > 0) {
-      const lastDueDate = dueDates[dueDates.length - 1];
-      await supabase
-        .from("recurring_rules")
-        .update({ next_run_on: nextRunDate({ ...rule, next_run_on: lastDueDate }) })
-        .eq("id", rule.id);
+    if (movedToToday) {
+      createdCount += 1;
+      await notify({
+        profileId: rule.assignee_id,
+        actorId: rule.created_by,
+        type: "recurring_task_created",
+        title: "Recurring duty ready",
+        body: rule.title,
+        href: `/projects/${rule.project_id}/board`,
+        taskId: liveTaskId,
+      });
     }
+
+    await supabase
+      .from("recurring_rules")
+      .update({ next_run_on: nextRunDate({ ...rule, next_run_on: latest }) })
+      .eq("id", rule.id);
   }
 
   revalidatePath("/today");
@@ -1445,12 +1551,11 @@ export async function notifyMissedRecurringDuties() {
   const today = todayISO();
 
   const { data: missed, error } = await supabase
-    .from("tasks")
-    .select("id, title, project_id, assignee_id, generated_for_date")
-    .not("recurring_rule_id", "is", null)
-    .neq("status", "done")
-    .lt("generated_for_date", today)
-    .is("overdue_notified_at", null);
+    .from("recurring_occurrences")
+    .select("id, rule_id, project_id, assignee_id, occurrence_date")
+    .eq("status", "pending")
+    .lt("occurrence_date", today)
+    .is("notified_missed_at", null);
 
   if (error) {
     throw new Error(error.message);
@@ -1460,12 +1565,29 @@ export async function notifyMissedRecurringDuties() {
     return 0;
   }
 
+  const ruleIds = [...new Set(missed.map((occurrence) => occurrence.rule_id as string))];
+  const [{ data: ruleRows }, { data: liveTaskRows }] = await Promise.all([
+    supabase.from("recurring_rules").select("id, title").in("id", ruleIds),
+    supabase.from("tasks").select("id, recurring_rule_id").in("recurring_rule_id", ruleIds),
+  ]);
+
+  const ruleTitles = new Map((ruleRows ?? []).map((row) => [row.id as string, row.title as string]));
+  const liveTaskByRule = new Map<string, string>();
+  for (const row of liveTaskRows ?? []) {
+    const ruleId = row.recurring_rule_id as string | null;
+    if (ruleId && !liveTaskByRule.has(ruleId)) {
+      liveTaskByRule.set(ruleId, row.id as string);
+    }
+  }
+
   const managers = await managerProfileIds();
 
-  for (const task of missed) {
+  for (const occurrence of missed) {
+    const ruleId = occurrence.rule_id as string;
+    const title = ruleTitles.get(ruleId) ?? "A recurring duty";
     const recipientIds = new Set<string>([...managers]);
-    if (task.assignee_id) {
-      recipientIds.add(task.assignee_id);
+    if (occurrence.assignee_id) {
+      recipientIds.add(occurrence.assignee_id);
     }
 
     for (const profileId of recipientIds) {
@@ -1473,13 +1595,16 @@ export async function notifyMissedRecurringDuties() {
         profileId,
         type: "recurring_task_missed",
         title: "Recurring duty missed",
-        body: `${task.title} was not completed for ${task.generated_for_date}.`,
-        href: `/projects/${task.project_id}/board`,
-        taskId: task.id,
+        body: `${title} was not completed for ${occurrence.occurrence_date}.`,
+        href: `/projects/${occurrence.project_id}/board`,
+        taskId: liveTaskByRule.get(ruleId) ?? null,
       });
     }
 
-    await supabase.from("tasks").update({ overdue_notified_at: new Date().toISOString() }).eq("id", task.id);
+    await supabase
+      .from("recurring_occurrences")
+      .update({ status: "missed", notified_missed_at: new Date().toISOString() })
+      .eq("id", occurrence.id);
   }
 
   revalidatePath("/today");
@@ -1497,90 +1622,63 @@ export async function completeRecurringDuty(formData: FormData) {
   const supabase = getSupabaseAdmin();
   const today = todayISO();
 
-  // Prefer completing an already-generated instance for the current or a past
-  // (missed) interval.
-  const { data: open } = await supabase
-    .from("tasks")
-    .select("id")
-    .eq("recurring_rule_id", ruleId)
+  const { data: rule, error: ruleError } = await supabase
+    .from("recurring_rules")
+    .select("*")
+    .eq("id", ruleId)
     .eq("project_id", projectId)
-    .neq("status", "done")
-    .lte("generated_for_date", today)
-    .order("generated_for_date", { ascending: false })
-    .limit(1)
     .maybeSingle();
 
-  let targetId = open?.id ?? null;
+  if (ruleError) {
+    throw new Error(ruleError.message);
+  }
 
-  // No instance exists yet (e.g. the daily cron has not generated it). Generate
-  // the current interval on demand so the assignee can still mark it complete.
+  if (!rule) {
+    throw new Error("Recurring duty not found");
+  }
+
+  // Find the single live ticket for this rule.
+  const { data: existing, error: existingError } = await supabase
+    .from("tasks")
+    .select("id, generated_for_date")
+    .eq("recurring_rule_id", ruleId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+
+  if (existingError) {
+    throw new Error(existingError.message);
+  }
+
+  let targetId = existing?.id ?? null;
+  let occurrenceDate = existing?.generated_for_date ?? null;
+
+  // No live ticket yet (e.g. the daily cron has not generated it). Create it on
+  // demand for the current interval so the assignee can still mark it complete.
   if (!targetId) {
-    const { data: rule, error: ruleError } = await supabase
-      .from("recurring_rules")
-      .select("*")
-      .eq("id", ruleId)
-      .eq("project_id", projectId)
-      .maybeSingle();
-
-    if (ruleError) {
-      throw new Error(ruleError.message);
-    }
-
-    if (!rule) {
-      throw new Error("Recurring duty not found");
-    }
-
     const scheduledDate = rule.next_run_on as string;
-    const dueDate = scheduledDate <= today ? scheduledDate : today;
+    occurrenceDate = scheduledDate <= today ? scheduledDate : today;
 
-    // Insert the instance only if one does not already exist for this date;
-    // never overwrite an existing (possibly completed) instance.
     const { data: created, error: createError } = await supabase
       .from("tasks")
-      .upsert(
-        {
-          project_id: projectId,
-          recurring_rule_id: ruleId,
-          title: rule.title,
-          description: rule.description,
-          assignee_id: rule.assignee_id,
-          due_date: dueDate,
-          generated_for_date: dueDate,
-          status: "today",
-          created_by: rule.created_by,
-        },
-        { onConflict: "recurring_rule_id,generated_for_date", ignoreDuplicates: true },
-      )
+      .insert({
+        project_id: projectId,
+        recurring_rule_id: ruleId,
+        title: rule.title,
+        description: rule.description,
+        assignee_id: rule.assignee_id,
+        due_date: occurrenceDate,
+        generated_for_date: occurrenceDate,
+        status: "today",
+        created_by: rule.created_by,
+      })
       .select("id")
-      .maybeSingle();
+      .single();
 
     if (createError) {
       throw new Error(createError.message);
     }
 
-    targetId = created?.id ?? null;
-
-    if (!targetId) {
-      // The instance already existed (e.g. generated by cron between our read
-      // and write); fetch it so we can mark it done.
-      const { data: existing, error: existingError } = await supabase
-        .from("tasks")
-        .select("id")
-        .eq("recurring_rule_id", ruleId)
-        .eq("project_id", projectId)
-        .eq("generated_for_date", dueDate)
-        .maybeSingle();
-
-      if (existingError) {
-        throw new Error(existingError.message);
-      }
-
-      targetId = existing?.id ?? null;
-    }
-
-    if (!targetId) {
-      throw new Error("Unable to prepare recurring duty instance");
-    }
+    targetId = created.id;
 
     // If we consumed the scheduled occurrence, advance the rule like the cron would.
     if (scheduledDate <= today) {
@@ -1588,11 +1686,24 @@ export async function completeRecurringDuty(formData: FormData) {
     }
   }
 
+  if (!occurrenceDate) {
+    occurrenceDate = today;
+  }
+
   await supabase
     .from("tasks")
     .update({ status: "done", completed_at: new Date().toISOString(), overdue_notified_at: null })
     .eq("id", targetId)
     .eq("project_id", projectId);
+
+  // Record the completion in the occurrence history log.
+  await syncRecurringOccurrence(supabase, {
+    ruleId,
+    projectId,
+    occurrenceDate,
+    assigneeId: rule.assignee_id,
+    done: true,
+  });
 
   revalidatePath(`/projects/${projectId}/board`);
   revalidatePath("/today");

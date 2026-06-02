@@ -17,13 +17,13 @@ import {
   type ProjectUserFlag,
   type ProjectUserFlagEvent,
   type RecurringOccurrence,
+  type RecurringOccurrenceRow,
   type RecurringRule,
   type RecurringRuleWithHistory,
   type Suggestion,
   type SuggestionCategory,
   type SuggestionComment,
   type Task,
-  type TaskStatus,
 } from "@/lib/types";
 
 type SessionUser = {
@@ -476,67 +476,95 @@ export async function listRecurringRules(projectId: string) {
   return assertDb<RecurringRule[]>(data, error);
 }
 
-type RecurringInstanceRow = {
-  id: string;
-  status: TaskStatus;
-  generated_for_date: string | null;
-  recurring_rule_id: string | null;
-};
-
 const RECURRING_HISTORY_SIZE = 7;
 
-function buildRecurringHistory(instances: RecurringInstanceRow[], ruleId: string, today: string) {
-  const ruleInstances = instances
-    .filter((row) => row.recurring_rule_id === ruleId)
+function buildRecurringHistory(
+  occurrences: RecurringOccurrenceRow[],
+  ruleId: string,
+  today: string,
+  liveTaskId: string | null,
+) {
+  const ruleOccurrences = occurrences
+    .filter((row) => row.rule_id === ruleId)
     .slice(0, RECURRING_HISTORY_SIZE);
 
-  const history: RecurringOccurrence[] = [...ruleInstances].reverse().map((row) => ({
-    date: row.generated_for_date ?? "",
+  const history: RecurringOccurrence[] = [...ruleOccurrences].reverse().map((row) => ({
+    date: row.occurrence_date,
     status:
       row.status === "done"
         ? "done"
-        : row.generated_for_date && row.generated_for_date < today
+        : row.occurrence_date < today
           ? "missed"
           : "pending",
   }));
 
-  const pending = ruleInstances.find(
-    (row) => row.status !== "done" && row.generated_for_date != null && row.generated_for_date <= today,
+  // The most recent occurrence on or before today determines whether the duty
+  // has been completed for the current period.
+  const pending = ruleOccurrences.find(
+    (row) => row.status !== "done" && row.occurrence_date <= today,
   );
-  const doneRecent = ruleInstances.find(
-    (row) => row.status === "done" && row.generated_for_date != null && row.generated_for_date <= today,
+  const doneRecent = ruleOccurrences.find(
+    (row) => row.status === "done" && row.occurrence_date <= today,
   );
 
   return {
     history,
-    currentInstanceId: pending?.id ?? null,
+    currentInstanceId: liveTaskId,
     currentPeriodDone: !pending && Boolean(doneRecent),
     completedCount: history.filter((occurrence) => occurrence.status === "done").length,
   };
 }
 
-async function fetchRecurringInstances(ruleIds: string[]) {
+async function fetchRecurringOccurrences(ruleIds: string[]) {
   if (ruleIds.length === 0) {
-    return [] as RecurringInstanceRow[];
+    return [] as RecurringOccurrenceRow[];
+  }
+
+  const { data, error } = await getSupabaseAdmin()
+    .from("recurring_occurrences")
+    .select("*")
+    .in("rule_id", ruleIds)
+    .order("occurrence_date", { ascending: false });
+
+  return assertDb<RecurringOccurrenceRow[]>(data, error);
+}
+
+// Map each rule to its single live task (the ticket that moves between board
+// columns). At most one row exists per rule under the new model.
+async function fetchLiveRecurringTaskIds(ruleIds: string[]) {
+  if (ruleIds.length === 0) {
+    return new Map<string, string>();
   }
 
   const { data, error } = await getSupabaseAdmin()
     .from("tasks")
-    .select("id, status, generated_for_date, recurring_rule_id")
-    .in("recurring_rule_id", ruleIds)
-    .order("generated_for_date", { ascending: false });
+    .select("id, recurring_rule_id")
+    .in("recurring_rule_id", ruleIds);
 
-  return assertDb<RecurringInstanceRow[]>(data, error);
+  const rows = assertDb<Array<{ id: string; recurring_rule_id: string | null }>>(data, error);
+  const map = new Map<string, string>();
+
+  for (const row of rows) {
+    if (row.recurring_rule_id && !map.has(row.recurring_rule_id)) {
+      map.set(row.recurring_rule_id, row.id);
+    }
+  }
+
+  return map;
 }
 
 export async function listRecurringRulesWithHistory(projectId: string): Promise<RecurringRuleWithHistory[]> {
   const rules = await listRecurringRules(projectId);
   const today = todayISO();
-  const instances = await fetchRecurringInstances(rules.map((rule) => rule.id));
+  const ruleIds = rules.map((rule) => rule.id);
+  const [occurrences, liveTaskIds] = await Promise.all([
+    fetchRecurringOccurrences(ruleIds),
+    fetchLiveRecurringTaskIds(ruleIds),
+  ]);
 
   return rules.map((rule) => ({
     ...rule,
-    ...buildRecurringHistory(instances, rule.id, today),
+    ...buildRecurringHistory(occurrences, rule.id, today, liveTaskIds.get(rule.id) ?? null),
   }));
 }
 
@@ -783,10 +811,9 @@ export async function getManagerDashboard() {
         .order("updated_at", { ascending: false })
         .limit(10),
       supabase
-        .from("tasks")
-        .select("assignee_id,status,generated_for_date")
-        .not("recurring_rule_id", "is", null)
-        .gte("generated_for_date", thirtyDaysAgo),
+        .from("recurring_occurrences")
+        .select("assignee_id,status,occurrence_date")
+        .gte("occurrence_date", thirtyDaysAgo),
       supabase
         .from("recurring_rules")
         .select("*, assignee:profiles!recurring_rules_assignee_id_fkey(*), projects(name)")
@@ -796,18 +823,22 @@ export async function getManagerDashboard() {
 
   const profiles = assertDb<Profile[]>(profilesResult.data, profilesResult.error);
   const recurringRows = assertDb<
-    Array<{ assignee_id: string | null; status: TaskStatus; generated_for_date: string | null }>
+    Array<{ assignee_id: string | null; status: RecurringOccurrence["status"]; occurrence_date: string }>
   >(recurringResult.data, recurringResult.error);
 
   const recurringRuleRows = assertDb<Array<RecurringRule & { projects?: { name: string } | null }>>(
     recurringRulesResult.data,
     recurringRulesResult.error,
   );
-  const recurringInstances = await fetchRecurringInstances(recurringRuleRows.map((rule) => rule.id));
+  const recurringRuleIds = recurringRuleRows.map((rule) => rule.id);
+  const [recurringOccurrences, recurringLiveTaskIds] = await Promise.all([
+    fetchRecurringOccurrences(recurringRuleIds),
+    fetchLiveRecurringTaskIds(recurringRuleIds),
+  ]);
   const recurringDuties: RecurringRuleWithHistory[] = recurringRuleRows.map((rule) => ({
     ...rule,
     projectName: rule.projects?.name ?? null,
-    ...buildRecurringHistory(recurringInstances, rule.id, today),
+    ...buildRecurringHistory(recurringOccurrences, rule.id, today, recurringLiveTaskIds.get(rule.id) ?? null),
   }));
 
   const completionByPerson = profiles.map((profile) => {

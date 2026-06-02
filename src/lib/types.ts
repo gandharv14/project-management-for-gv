@@ -117,6 +117,22 @@ export type RecurringOccurrence = {
   status: RecurringOccurrenceStatus;
 };
 
+// A persisted row in the recurring_occurrences history log. One row exists per
+// (rule, occurrence_date); the single live task only ever reflects the most
+// recent occurrence, while this log keeps the full completion history.
+export type RecurringOccurrenceRow = {
+  id: string;
+  rule_id: string;
+  project_id: string;
+  occurrence_date: string;
+  status: RecurringOccurrenceStatus;
+  assignee_id: string | null;
+  completed_at: string | null;
+  notified_missed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type RecurringRuleWithHistory = RecurringRule & {
   history: RecurringOccurrence[];
   currentInstanceId: string | null;

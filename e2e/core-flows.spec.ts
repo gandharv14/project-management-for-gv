@@ -463,7 +463,7 @@ test.describe("core product flows", () => {
     expect(insert.error).not.toBeNull();
   });
 
-  test("catches up missed recurring instances without resetting completed ones", async ({ request }) => {
+  test("catches up missed recurring occurrences with a single live ticket", async ({ request }) => {
     test.skip(!process.env.CRON_SECRET, "CRON_SECRET is required for recurring cron E2E coverage.");
 
     const supabase = getE2ESupabase();
@@ -489,28 +489,40 @@ test.describe("core product flows", () => {
     });
     expect(firstCron.ok()).toBeTruthy();
 
-    const { data: firstInstances, error: firstError } = await supabase
-      .from("tasks")
-      .select("id, generated_for_date, status")
-      .eq("recurring_rule_id", rule.id)
-      .order("generated_for_date", { ascending: true });
+    const { data: firstOccurrences, error: firstError } = await supabase
+      .from("recurring_occurrences")
+      .select("id, occurrence_date, status")
+      .eq("rule_id", rule.id)
+      .order("occurrence_date", { ascending: true });
 
     if (firstError) {
       throw new Error(firstError.message);
     }
 
-    const instances = firstInstances ?? [];
-    // A 3-day-stale daily rule must generate the missed occurrences, not one.
-    expect(instances.length).toBeGreaterThanOrEqual(3);
+    const occurrences = firstOccurrences ?? [];
+    // A 3-day-stale daily rule must log the missed occurrences, not one.
+    expect(occurrences.length).toBeGreaterThanOrEqual(3);
 
-    const oldest = instances.find((task) => task.generated_for_date === todayISO(-3));
+    const oldest = occurrences.find((occurrence) => occurrence.occurrence_date === todayISO(-3));
     expect(oldest).toBeDefined();
 
-    // Complete the oldest instance, then force the cron to revisit the same
+    // There is exactly one live ticket regardless of how many occurrences exist.
+    const { data: firstTasks, error: firstTasksError } = await supabase
+      .from("tasks")
+      .select("id, status")
+      .eq("recurring_rule_id", rule.id);
+
+    if (firstTasksError) {
+      throw new Error(firstTasksError.message);
+    }
+
+    expect(firstTasks ?? []).toHaveLength(1);
+
+    // Complete the oldest occurrence, then force the cron to revisit the same
     // dates. ON CONFLICT DO NOTHING must neither duplicate nor reset it.
     await assertWrite(
       await supabase
-        .from("tasks")
+        .from("recurring_occurrences")
         .update({ status: "done", completed_at: new Date().toISOString() })
         .eq("id", oldest!.id),
     );
@@ -521,19 +533,31 @@ test.describe("core product flows", () => {
     });
     expect(secondCron.ok()).toBeTruthy();
 
-    const { data: afterInstances, error: afterError } = await supabase
-      .from("tasks")
+    const { data: afterOccurrences, error: afterError } = await supabase
+      .from("recurring_occurrences")
       .select("id, status")
-      .eq("recurring_rule_id", rule.id);
+      .eq("rule_id", rule.id);
 
     if (afterError) {
       throw new Error(afterError.message);
     }
 
-    // No duplicate instances were created on the second run.
-    expect(afterInstances ?? []).toHaveLength(instances.length);
-    // The completed instance was not reset back to "today".
-    expect((afterInstances ?? []).find((task) => task.id === oldest!.id)?.status).toBe("done");
+    // No duplicate occurrences were created on the second run.
+    expect(afterOccurrences ?? []).toHaveLength(occurrences.length);
+    // The completed occurrence was not reset.
+    expect((afterOccurrences ?? []).find((occurrence) => occurrence.id === oldest!.id)?.status).toBe("done");
+
+    // Still a single live ticket after the second run.
+    const { data: afterTasks, error: afterTasksError } = await supabase
+      .from("tasks")
+      .select("id")
+      .eq("recurring_rule_id", rule.id);
+
+    if (afterTasksError) {
+      throw new Error(afterTasksError.message);
+    }
+
+    expect(afterTasks ?? []).toHaveLength(1);
   });
 
   test("surfaces and clears the assignment notification", async ({ page }) => {
