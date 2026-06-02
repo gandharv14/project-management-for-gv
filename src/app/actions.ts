@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { ensureCurrentProfile, nextRunDate, requireManager, requireProjectAccess, todayISO } from "@/lib/data";
+import { callLabelboxModel } from "@/lib/llm";
 import { recurringRunDatesUpTo } from "@/lib/recurrence";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { httpUrlSchema } from "@/lib/validation";
@@ -1708,4 +1709,80 @@ export async function completeRecurringDuty(formData: FormData) {
   revalidatePath(`/projects/${projectId}/board`);
   revalidatePath("/today");
   revalidatePath("/manager");
+}
+
+export type ClientTicketDraft = {
+  isClientFacing: boolean;
+  reason: string;
+  message: string | null;
+};
+
+const clientTicketDraftSchema = z.object({
+  is_client_facing: z.boolean(),
+  reason: z.string(),
+  message: z.string().nullable(),
+});
+
+const CLIENT_TICKET_SYSTEM_PROMPT = `You are an assistant that helps a manager decide whether an internal task should be raised with an external client, and if so drafts a short, client-ready message.
+
+You will receive the title and description of a task. Decide whether this task is something the manager needs to raise to the client (for example: a blocker caused by the client, missing assets/access the client must provide, a question only the client can answer, a defect/issue to report to the client, or an approval/decision the client owns). Internal-only work (engineering chores, internal coordination, routine updates) is NOT client-facing.
+
+Respond with ONLY a JSON object, no markdown, matching exactly this shape:
+{
+  "is_client_facing": boolean,
+  "reason": string,
+  "message": string | null
+}
+
+Rules:
+- "reason": one short sentence explaining your decision.
+- If "is_client_facing" is false, set "message" to null.
+- If "is_client_facing" is true, set "message" to a clean, professional, copy-paste-ready message addressed to the client. It MUST use exactly this two-section format with these literal labels, each on its own line:
+
+Description:
+<a clear, concise description of the issue/request rewritten for the client>
+
+Relevant Link or UUID:
+<any link or UUID found in the task content, or "No relevant link or UUID provided" if none>
+
+- Do not invent links or UUIDs. Only extract ones present in the task content.
+- Keep the message professional and free of internal jargon.`;
+
+export async function draftClientTicketMessage(taskId: string): Promise<ClientTicketDraft> {
+  await requireManager();
+
+  const id = z.string().uuid().parse(taskId);
+
+  const { data: task, error } = await getSupabaseAdmin()
+    .from("tasks")
+    .select("title, description")
+    .eq("id", id)
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const userPrompt = `Task title: ${task.title}\n\nTask description:\n${task.description ?? "(no description provided)"}`;
+
+  const raw = await callLabelboxModel({
+    system: CLIENT_TICKET_SYSTEM_PROMPT,
+    user: userPrompt,
+  });
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("The agent returned a response that could not be parsed. Please try again.");
+  }
+
+  const result = clientTicketDraftSchema.parse(parsed);
+
+  return {
+    isClientFacing: result.is_client_facing,
+    reason: result.reason,
+    message: result.is_client_facing ? result.message : null,
+  };
 }

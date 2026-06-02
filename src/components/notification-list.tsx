@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Bell } from "lucide-react";
 
@@ -46,11 +47,14 @@ export function NotificationList({ notifications }: { notifications: Notificatio
   return (
     <div className="mb-4 rounded-lg border bg-background/60 p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm font-medium">
+        <Link
+          href="/notifications"
+          className="flex items-center gap-2 text-sm font-medium hover:text-foreground/80"
+        >
           <Bell className="h-4 w-4" />
           Notifications
           {unreadCount > 0 ? <Badge>{unreadCount}</Badge> : null}
-        </div>
+        </Link>
         {unreadCount > 0 ? (
           <button
             type="button"
@@ -84,6 +88,14 @@ export function NotificationList({ notifications }: { notifications: Notificatio
           <p className="text-xs text-muted-foreground">No notifications yet.</p>
         ) : null}
       </div>
+      {notifications.length > 0 ? (
+        <Link
+          href="/notifications"
+          className="mt-2 block text-center text-xs text-muted-foreground hover:text-foreground"
+        >
+          View all
+        </Link>
+      ) : null}
     </div>
   );
 }

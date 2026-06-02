@@ -379,7 +379,8 @@ const TASK_LINKED_NOTIFICATION_TYPES = new Set<string>([
   "recurring_task_missed",
 ]);
 
-export async function listNotifications(profileId: string) {
+export async function listNotifications(profileId: string, options?: { limit?: number }) {
+  const limit = options?.limit ?? 10;
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("notifications")
@@ -387,7 +388,7 @@ export async function listNotifications(profileId: string) {
     .eq("profile_id", profileId)
     .in("type", [...DISPLAYED_NOTIFICATION_TYPES])
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(Math.max(30, limit * 3));
 
   const rows = assertDb<Notification[]>(data, error);
 
@@ -433,7 +434,7 @@ export async function listNotifications(profileId: string) {
 
       return true;
     })
-    .slice(0, 10);
+    .slice(0, limit);
 }
 
 export async function getAppContext(projectId?: string) {
@@ -457,7 +458,7 @@ export async function getAppContext(projectId?: string) {
 export async function listTasks(projectId: string) {
   const { data, error } = await getSupabaseAdmin()
     .from("tasks")
-    .select("*, assignee:profiles!tasks_assignee_id_fkey(*)")
+    .select("*, assignee:profiles!tasks_assignee_id_fkey(*), creator:profiles!tasks_created_by_fkey(*)")
     .eq("project_id", projectId)
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true });

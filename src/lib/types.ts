@@ -91,6 +91,7 @@ export type Task = {
   created_at: string;
   updated_at: string;
   assignee?: Profile | null;
+  creator?: Profile | null;
 };
 
 export type RecurringRule = {

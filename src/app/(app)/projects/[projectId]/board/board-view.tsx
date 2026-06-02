@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { CalendarClock, CheckCircle2, Eye, EyeOff, Maximize2, Repeat, ShieldAlert } from "lucide-react";
+import { CalendarClock, CheckCircle2, Eye, EyeOff, Maximize2, Repeat, ShieldAlert, UserPlus } from "lucide-react";
 
 import { createBlocker, updateTaskStatus } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
@@ -19,9 +19,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { Task, TaskStatus } from "@/lib/types";
+import type { ProfileRole, Task, TaskStatus } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
+import { ClientTicketAgent } from "./client-ticket-agent";
 import { DeleteTaskButton } from "./delete-task-button";
 
 type Column = { id: TaskStatus; label: string };
@@ -30,9 +31,10 @@ type BoardViewProps = {
   projectId: string;
   columns: Column[];
   tasks: Task[];
+  viewerRole: ProfileRole;
 };
 
-export function BoardView({ projectId, columns, tasks }: BoardViewProps) {
+export function BoardView({ projectId, columns, tasks, viewerRole }: BoardViewProps) {
   const [showRecurring, setShowRecurring] = React.useState(true);
 
   const recurringCount = React.useMemo(
@@ -71,6 +73,7 @@ export function BoardView({ projectId, columns, tasks }: BoardViewProps) {
               columns={columns}
               projectId={projectId}
               tasks={visibleTasks.filter((task) => task.status === column.id)}
+              viewerRole={viewerRole}
             />
           ))}
         </div>
@@ -84,11 +87,13 @@ function TaskColumn({
   columns,
   projectId,
   tasks,
+  viewerRole,
 }: {
   column: Column;
   columns: Column[];
   projectId: string;
   tasks: Task[];
+  viewerRole: ProfileRole;
 }) {
   return (
     <section className="flex min-h-[32rem] flex-col rounded-xl border bg-card/70">
@@ -98,7 +103,7 @@ function TaskColumn({
       </div>
       <div className="grid gap-3 p-4">
         {tasks.map((task) => (
-          <TaskCard key={task.id} columns={columns} projectId={projectId} task={task} />
+          <TaskCard key={task.id} columns={columns} projectId={projectId} task={task} viewerRole={viewerRole} />
         ))}
         {tasks.length === 0 ? (
           <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">No tasks</p>
@@ -108,7 +113,17 @@ function TaskColumn({
   );
 }
 
-function TaskCard({ columns, projectId, task }: { columns: Column[]; projectId: string; task: Task }) {
+function TaskCard({
+  columns,
+  projectId,
+  task,
+  viewerRole,
+}: {
+  columns: Column[];
+  projectId: string;
+  task: Task;
+  viewerRole: ProfileRole;
+}) {
   const [detailOpen, setDetailOpen] = React.useState(false);
 
   return (
@@ -152,6 +167,10 @@ function TaskCard({ columns, projectId, task }: { columns: Column[]; projectId: 
         <span className="flex items-center gap-1">
           <CalendarClock className="h-3 w-3" />
           {formatDate(task.due_date)}
+        </span>
+        <span className="flex items-center gap-1">
+          <UserPlus className="h-3 w-3" />
+          {task.creator?.display_name ?? "Unknown"}
         </span>
       </div>
       <ActionForm action={updateTaskStatus} className="mt-3 grid grid-cols-[1fr_auto] gap-2">
@@ -236,6 +255,13 @@ function TaskDetailDialog({
             <dd className="flex items-center gap-1">
               <CalendarClock className="h-3 w-3" />
               {formatDate(task.due_date)}
+            </dd>
+          </div>
+          <div className="grid gap-1">
+            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Created by</dt>
+            <dd className="flex items-center gap-1">
+              <UserPlus className="h-3 w-3" />
+              {task.creator?.display_name ?? "Unknown"}
             </dd>
           </div>
         </dl>
