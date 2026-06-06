@@ -59,6 +59,14 @@ function taskReferenceLinks(formData: FormData) {
   return multilineText(formData, "referenceLinks").map((link) => httpUrlSchema.parse(link));
 }
 
+function isMissingTaskMediaColumn(error: { message: string } | null) {
+  if (!error) {
+    return false;
+  }
+
+  return ["image_urls", "reference_links"].some((column) => error.message.includes(`'${column}' column`));
+}
+
 function googleWorkspaceUrl(value: string) {
   const url = httpUrlSchema.parse(value);
   const hostname = new URL(url).hostname.toLowerCase();
@@ -800,25 +808,35 @@ export async function createTask(formData: FormData) {
     taskId,
     files: screenshotFiles,
   });
-  const { data: task, error } = await getSupabaseAdmin()
+  const taskValues = {
+    id: taskId,
+    project_id: projectId,
+    title,
+    description: text(formData, "description"),
+    assignee_id: assigneeId,
+    due_date: text(formData, "dueDate"),
+    status,
+    created_by: profile.id,
+  };
+  const supabase = getSupabaseAdmin();
+  let { data: task, error } = await supabase
     .from("tasks")
     .insert({
-      id: taskId,
-      project_id: projectId,
-      title,
-      description: text(formData, "description"),
+      ...taskValues,
       image_urls: screenshotUrls,
       reference_links: referenceLinks,
-      assignee_id: assigneeId,
-      due_date: text(formData, "dueDate"),
-      status,
-      created_by: profile.id,
     })
     .select("id")
     .single();
 
-  if (error) {
-    throw new Error(error.message);
+  if (isMissingTaskMediaColumn(error)) {
+    const fallback = await supabase.from("tasks").insert(taskValues).select("id").single();
+    task = fallback.data;
+    error = fallback.error;
+  }
+
+  if (error || !task) {
+    throw new Error(error?.message ?? "Task was not created.");
   }
 
   await notify({

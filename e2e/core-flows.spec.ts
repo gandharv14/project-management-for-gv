@@ -579,6 +579,33 @@ test.describe("core product flows", () => {
     await expect(page.getByRole("button", { name: "Mark all read" })).toHaveCount(0);
   });
 
+  test("lets project members create unassigned tasks from the board", async ({ page }) => {
+    const supabase = getE2ESupabase();
+    const taskTitle = "E2E Member Created Task";
+
+    await loginAs(page, "member", `/projects/${seed.project.id}/board`);
+    await page.getByRole("button", { name: "Create task" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Title").fill(taskTitle);
+    await dialog.getByRole("button", { name: "Create task" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText(taskTitle)).toBeVisible();
+
+    const { data: task, error } = await supabase
+      .from("tasks")
+      .select("assignee_id,created_by")
+      .eq("project_id", seed.project.id)
+      .eq("title", taskTitle)
+      .single();
+
+    if (error || !task) {
+      throw new Error(error?.message ?? "Member-created task was not persisted.");
+    }
+
+    expect(task.assignee_id).toBeNull();
+    expect(task.created_by).toBe(seed.member.id);
+  });
+
   test("toggles a suggestion vote on and off", async ({ page }) => {
     const supabase = getE2ESupabase();
     const hasSuggestionCategories = await hasSuggestionCategoryColumn();
