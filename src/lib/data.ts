@@ -88,16 +88,23 @@ async function getE2ESessionUser(): Promise<SessionUser | null> {
     return null;
   }
 
-  const role = (await cookies()).get("e2e-user")?.value ?? getE2ERole();
+  const cookieStore = await cookies();
+  const role = cookieStore.get("e2e-user")?.value ?? getE2ERole();
 
   if (!isE2ERole(role)) {
     return null;
   }
 
+  const impersonatedEmail = cookieStore.get("e2e-email")?.value;
+  const impersonatedName = cookieStore.get("e2e-name")?.value;
+  const impersonatedSub = cookieStore.get("e2e-sub")?.value;
+  const defaultEmail = role === "manager" ? "manager.e2e@example.com" : "member.e2e@example.com";
+  const defaultName = role === "manager" ? "E2E Manager" : "E2E Member";
+
   return {
-    sub: `e2e|${role}`,
-    email: role === "manager" ? "manager.e2e@example.com" : "member.e2e@example.com",
-    name: role === "manager" ? "E2E Manager" : "E2E Member",
+    sub: impersonatedSub ?? `e2e|${role}`,
+    email: impersonatedEmail ?? defaultEmail,
+    name: impersonatedName ?? defaultName,
     nickname: role,
   } satisfies SessionUser;
 }

@@ -22,6 +22,9 @@ export function GET(request: NextRequest) {
     const response = NextResponse.redirect(new URL(redirectTo, request.url));
     clearE2ERole();
     response.cookies.delete("e2e-user");
+    response.cookies.delete("e2e-email");
+    response.cookies.delete("e2e-name");
+    response.cookies.delete("e2e-sub");
     return response;
   }
 
@@ -42,6 +45,25 @@ export function GET(request: NextRequest) {
     path: "/",
   });
 
+  for (const [cookieName, paramName] of [
+    ["e2e-email", "email"],
+    ["e2e-name", "name"],
+    ["e2e-sub", "sub"],
+  ] as const) {
+    const value = request.nextUrl.searchParams.get(paramName)?.trim();
+
+    if (value) {
+      response.cookies.set(cookieName, value, {
+        httpOnly: true,
+        sameSite: "strict",
+        secure: false,
+        path: "/",
+      });
+    } else {
+      response.cookies.delete(cookieName);
+    }
+  }
+
   return response;
 }
 
@@ -55,5 +77,8 @@ export function DELETE() {
   const response = NextResponse.json({ ok: true });
   clearE2ERole();
   response.cookies.delete("e2e-user");
+  response.cookies.delete("e2e-email");
+  response.cookies.delete("e2e-name");
+  response.cookies.delete("e2e-sub");
   return response;
 }
