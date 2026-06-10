@@ -14,11 +14,10 @@ import {
   Maximize2,
   Pencil,
   Repeat,
-  ShieldAlert,
   UserPlus,
 } from "lucide-react";
 
-import { createBlocker, updateTaskStatus } from "@/app/actions";
+import { updateTaskStatus } from "@/app/actions";
 import { ActionForm } from "@/components/action-form";
 import { FormSubmitButton } from "@/components/form-submit-button";
 import { MarkdownBody } from "@/components/markdown-body";
@@ -31,10 +30,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import type { ProfileRole, ProjectMember, Task, TaskStatus } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
@@ -305,21 +302,7 @@ function TaskCard({
             Confirm unblocked
           </FormSubmitButton>
         </ActionForm>
-      ) : (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-xs text-muted-foreground">Raise blocker</summary>
-          <ActionForm action={createBlocker} className="mt-2 grid gap-2">
-            <input name="projectId" type="hidden" value={projectId} />
-            <input name="taskId" type="hidden" value={task.id} />
-            <Input name="title" placeholder="What is blocking this?" required />
-            <Textarea name="description" placeholder="Details" />
-            <FormSubmitButton pendingLabel="Raising..." size="sm" variant="destructive">
-              <ShieldAlert className="h-4 w-4" />
-              Raise
-            </FormSubmitButton>
-          </ActionForm>
-        </details>
-      )}
+      ) : null}
     </div>
   );
 }

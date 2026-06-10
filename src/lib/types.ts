@@ -1,5 +1,4 @@
 export const TASK_STATUSES = ["backlog", "today", "in_progress", "blocked", "done"] as const;
-export const BLOCKER_STATUSES = ["open", "acknowledged", "resolved"] as const;
 export const SUGGESTION_STATUSES = ["open", "under_consideration", "accepted", "parked"] as const;
 export const SUGGESTION_CATEGORIES = ["proposal", "project", "management", "process", "tooling", "other"] as const;
 export const PROJECT_DOCUMENT_TYPES = ["doc", "sheet", "slide", "folder", "other"] as const;
@@ -7,7 +6,6 @@ export const RECURRENCE_FREQUENCIES = ["daily", "weekly", "custom"] as const;
 export const FLAG_STAGES = ["flagged", "warned", "remove_requested", "removed"] as const;
 
 export type TaskStatus = (typeof TASK_STATUSES)[number];
-export type BlockerStatus = (typeof BLOCKER_STATUSES)[number];
 export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number];
 export type SuggestionCategory = (typeof SUGGESTION_CATEGORIES)[number];
 export type ProjectDocumentType = (typeof PROJECT_DOCUMENT_TYPES)[number];
@@ -160,23 +158,6 @@ export type RecurringRuleWithHistory = RecurringRule & {
   projectName?: string | null;
 };
 
-export type Blocker = {
-  id: string;
-  project_id: string;
-  task_id: string | null;
-  title: string;
-  description: string | null;
-  status: BlockerStatus;
-  owner_id: string | null;
-  raised_by: string | null;
-  resolved_at: string | null;
-  created_at: string;
-  updated_at: string;
-  owner?: Profile | null;
-  raiser?: Profile | null;
-  task?: Pick<Task, "id" | "title" | "assignee_id" | "status"> | null;
-};
-
 export type Suggestion = {
   id: string;
   project_id: string;
@@ -205,7 +186,6 @@ export type SuggestionComment = {
 
 export const DISPLAYED_NOTIFICATION_TYPES = [
   "assignment_created",
-  "blocker_status_changed",
   "recurring_task_created",
   "recurring_task_missed",
   "suggestion_traction",
@@ -215,7 +195,6 @@ export const DISPLAYED_NOTIFICATION_TYPES = [
 
 export type NotificationType =
   | "assignment_created"
-  | "blocker_status_changed"
   | "recurring_task_created"
   | "recurring_task_missed"
   | "suggestion_traction"
@@ -231,7 +210,6 @@ export type Notification = {
   body: string | null;
   href: string | null;
   task_id: string | null;
-  blocker_id: string | null;
   read_at: string | null;
   created_at: string;
 };

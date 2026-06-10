@@ -50,7 +50,7 @@ export function DeleteProjectDialog({ projectId, projectName }: DeleteProjectDia
         <DialogHeader>
           <DialogTitle>Delete {projectName}?</DialogTitle>
           <DialogDescription>
-            This permanently deletes the project and its tasks, blockers, suggestions, recurring rules, and memberships.
+            This permanently deletes the project and its tasks, suggestions, recurring rules, and memberships.
           </DialogDescription>
         </DialogHeader>
 

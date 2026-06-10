@@ -17,7 +17,7 @@ export default async function HomePage() {
         <CardHeader>
           <CardTitle className="text-2xl">Team Management</CardTitle>
           <CardDescription>
-            Coordinate projects through tasks, blockers, suggestions, and recurring duties.
+            Coordinate projects through tasks, suggestions, and recurring duties.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">

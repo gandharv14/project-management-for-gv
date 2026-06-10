@@ -37,7 +37,7 @@ export default async function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Create project</CardTitle>
-            <CardDescription>Projects tie together tasks, blockers, and suggestions.</CardDescription>
+            <CardDescription>Projects tie together tasks and suggestions.</CardDescription>
           </CardHeader>
           <CardContent>
             <form action={createProject} className="grid gap-4 md:grid-cols-[1fr_1fr_auto]">

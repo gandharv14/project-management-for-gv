@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Team Management",
-  description: "Small-team project tasks, blockers, suggestions, and recurring duties.",
+  description: "Small-team project tasks, suggestions, and recurring duties.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

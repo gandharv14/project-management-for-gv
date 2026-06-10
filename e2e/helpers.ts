@@ -281,7 +281,7 @@ export async function resetE2EData(): Promise<SeedData> {
     ]),
   );
 
-  const tasks = await assertData<SeedTask[]>(
+  await assertData<SeedTask[]>(
     await supabase
       .from("tasks")
       .insert([
@@ -312,21 +312,16 @@ export async function resetE2EData(): Promise<SeedData> {
           status: "done",
           created_by: manager.id,
         },
+        {
+          project_id: project.id,
+          title: "E2E Seed Blocked Task",
+          description: "Seeded blocked task for manager dashboard",
+          assignee_id: member.id,
+          status: "blocked",
+          created_by: manager.id,
+        },
       ])
       .select("id,title"),
-  );
-
-  const overdueTask = tasks.find((task) => task.title === "E2E Seed Overdue Task");
-
-  await assertWrite(
-    await supabase.from("blockers").insert({
-      project_id: project.id,
-      task_id: overdueTask?.id,
-      title: "E2E Seed Blocker",
-      description: "Seeded blocker for manager dashboard",
-      owner_id: manager.id,
-      raised_by: member.id,
-    }),
   );
 
   const suggestion = await assertData<{ id: string }>(

@@ -34,7 +34,7 @@ test.describe("core product flows", () => {
     await cleanupE2EData();
   });
 
-  test("manages projects, members, tasks, and blockers", async ({ page }) => {
+  test("manages projects, members, tasks, and blocked tickets", async ({ page }) => {
     const supabase = getE2ESupabase();
 
     const projectName = "E2E Created Project";
@@ -216,37 +216,15 @@ test.describe("core product flows", () => {
 
     await assertWrite(await supabase.from("tasks").update({ status: "in_progress" }).eq("id", task.id));
 
-    const { data: blocker, error: blockerError } = await supabase
-      .from("blockers")
-      .insert({
-        project_id: seed.project.id,
-        task_id: task.id,
-        title: "E2E UI Blocker",
-        description: "Seeded by the browser test",
-        owner_id: seed.manager.id,
-        raised_by: seed.member.id,
-      })
-      .select("id")
-      .single();
-
-    if (blockerError || !blocker) {
-      throw new Error(blockerError?.message ?? "Blocker was not created.");
-    }
-
     await assertWrite(await supabase.from("tasks").update({ status: "blocked" }).eq("id", task.id));
 
     await loginAs(page, "manager", "/manager");
-    await expect(page.getByText("E2E UI Blocker")).toBeVisible();
-    await assertWrite(
-      await supabase
-        .from("blockers")
-        .update({ status: "resolved", resolved_at: new Date().toISOString() })
-        .eq("id", blocker.id),
-    );
-    await page.reload();
-    await expect(page.getByText("E2E UI Blocker")).toHaveCount(0);
+    await expect(page.getByText(taskTitle)).toBeVisible();
 
     await assertWrite(await supabase.from("tasks").update({ status: "in_progress" }).eq("id", task.id));
+    await page.reload();
+    await expect(page.getByText(taskTitle)).toHaveCount(0);
+
     await loginAs(page, "manager", "/manager");
     await expect(page.getByRole("cell", { name: "E2E Member" }).first()).toBeVisible();
   });
@@ -440,7 +418,7 @@ test.describe("core product flows", () => {
 
     await loginAs(page, "manager", "/manager");
     await expect(page.getByRole("heading", { name: "Manager Dashboard" })).toBeVisible();
-    await expect(page.getByText("E2E Seed Blocker")).toBeVisible();
+    await expect(page.getByText("E2E Seed Blocked Task")).toBeVisible();
     await expect(page.getByText("E2E Seed Suggestion")).toBeVisible();
     await expect(page.getByRole("cell", { name: "E2E Member" }).first()).toBeVisible();
   });

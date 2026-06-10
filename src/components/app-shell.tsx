@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type React from "react";
-import { FileText, Flag, LayoutDashboard, Lightbulb, ListChecks, ShieldAlert, Settings } from "lucide-react";
+import { FileText, Flag, LayoutDashboard, Lightbulb, ListChecks, Settings } from "lucide-react";
 
 import { NotificationList } from "@/components/notification-list";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -101,12 +101,6 @@ export function AppShell({
             <nav className="flex flex-col gap-1">
               <NavLink href={`/projects/${activeProject.id}/board`} icon={<ListChecks className="h-4 w-4" />}>
                 Board
-              </NavLink>
-              <NavLink
-                href={`/projects/${activeProject.id}/blockers`}
-                icon={<ShieldAlert className="h-4 w-4" />}
-              >
-                Blockers
               </NavLink>
               <NavLink
                 href={`/projects/${activeProject.id}/suggestions`}

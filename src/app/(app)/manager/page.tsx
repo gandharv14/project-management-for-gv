@@ -20,17 +20,17 @@ export default async function ManagerPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <RealtimeRefresh tables={["tasks", "blockers", "suggestions", "suggestion_votes"]} />
+      <RealtimeRefresh tables={["tasks", "suggestions", "suggestion_votes"]} />
       <div>
         <h1 className="text-3xl font-semibold tracking-tight">Manager Dashboard</h1>
         <p className="text-muted-foreground">
-          Overdue tasks, aging blockers, trending ideas, and recurring duty completion.
+          Overdue tasks, blocked tickets, trending ideas, and recurring duty completion.
         </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
         <Metric icon={<TimerReset />} label="Overdue tasks" value={dashboard.overdueTasks.length} />
-        <Metric icon={<AlertTriangle />} label="Open blockers" value={dashboard.blockers.length} />
+        <Metric icon={<AlertTriangle />} label="Blocked tasks" value={dashboard.blockedTasks.length} />
         <Metric icon={<Lightbulb />} label="Trending suggestions" value={dashboard.suggestions.length} />
         <Metric
           icon={<Repeat />}
@@ -152,26 +152,29 @@ export default async function ManagerPage() {
       <div className="grid gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Open blockers by age</CardTitle>
-            <CardDescription>Oldest unresolved blockers first.</CardDescription>
+            <CardTitle>Blocked tasks by age</CardTitle>
+            <CardDescription>Tasks sitting in the Blocked queue, oldest first.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3">
-            {dashboard.blockers.map((blocker) => (
-              <div key={blocker.id} className="rounded-lg border p-3">
+            {dashboard.blockedTasks.map((task) => (
+              <div key={task.id} className="rounded-lg border p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-medium">{blocker.title}</p>
+                    <p className="font-medium">{task.title}</p>
                     <p className="text-sm text-muted-foreground">
-                      {blocker.projects?.name ?? "Project"} · {blocker.ageDays} days old
+                      {task.projects?.name ?? "Project"} · {task.assignee?.display_name ?? "Unassigned"} ·{" "}
+                      {task.ageDays} days old
                     </p>
                   </div>
                   <Button asChild size="sm" variant="outline">
-                    <Link href={`/projects/${blocker.project_id}/blockers`}>Open</Link>
+                    <Link href={`/projects/${task.project_id}/board`}>Open</Link>
                   </Button>
                 </div>
               </div>
             ))}
-            {dashboard.blockers.length === 0 ? <p className="text-sm text-muted-foreground">No open blockers.</p> : null}
+            {dashboard.blockedTasks.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No blocked tasks.</p>
+            ) : null}
           </CardContent>
         </Card>
 

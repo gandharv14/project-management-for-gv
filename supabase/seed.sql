@@ -6,7 +6,7 @@ set display_name = excluded.display_name,
     role = excluded.role;
 
 insert into public.projects (name, description)
-values ('General', 'Default project for team tasks, blockers, and suggestions.')
+values ('General', 'Default project for team tasks and suggestions.')
 on conflict do nothing;
 
 insert into public.project_members (project_id, profile_id)

@@ -7,7 +7,6 @@ import { getE2ERole, isE2EAuthBypassEnabled, isE2ERole } from "@/lib/e2e-session
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
   DISPLAYED_NOTIFICATION_TYPES,
-  type Blocker,
   type Notification,
   type Profile,
   type ProfileMembershipScope,
@@ -401,42 +400,22 @@ export async function listNotifications(profileId: string, options?: { limit?: n
 
   const rows = assertDb<Notification[]>(data, error);
 
-  const blockerIds = [
-    ...new Set(
-      rows.filter((row) => row.type === "blocker_status_changed" && row.blocker_id).map((row) => row.blocker_id as string),
-    ),
-  ];
-  const taskIds = [
-    ...new Set(
-      rows
-        .filter((row) => row.type !== "blocker_status_changed" && row.task_id)
-        .map((row) => row.task_id as string),
-    ),
-  ];
+  const taskIds = [...new Set(rows.filter((row) => row.task_id).map((row) => row.task_id as string))];
 
-  const [aliveBlockers, aliveTasks] = await Promise.all([
-    blockerIds.length > 0
-      ? supabase.from("blockers").select("id").in("id", blockerIds)
-      : Promise.resolve({ data: [] as Array<{ id: string }>, error: null }),
+  const aliveTasks =
     taskIds.length > 0
-      ? supabase.from("tasks").select("id").in("id", taskIds)
-      : Promise.resolve({ data: [] as Array<{ id: string }>, error: null }),
-  ]);
+      ? await supabase.from("tasks").select("id").in("id", taskIds)
+      : { data: [] as Array<{ id: string }>, error: null };
 
-  const blockerAlive = new Set((aliveBlockers.data ?? []).map((row) => row.id));
   const taskAlive = new Set((aliveTasks.data ?? []).map((row) => row.id));
 
-  // Validate-on-read: for notifications that link to a task or blocker, only
-  // surface them while that entity still exists (this also drops legacy rows
-  // that predate entity linkage). Notifications that intentionally carry no
-  // entity link (e.g. suggestion_traction, suggestion_promoted) reference the
-  // suggestion via href and are always shown.
+  // Validate-on-read: for notifications that link to a task, only surface them
+  // while that task still exists (this also drops legacy rows that predate
+  // entity linkage). Notifications that intentionally carry no entity link
+  // (e.g. suggestion_traction, suggestion_promoted) reference the suggestion
+  // via href and are always shown.
   return rows
     .filter((row) => {
-      if (row.type === "blocker_status_changed") {
-        return Boolean(row.blocker_id) && blockerAlive.has(row.blocker_id as string);
-      }
-
       if (TASK_LINKED_NOTIFICATION_TYPES.has(row.type)) {
         return Boolean(row.task_id) && taskAlive.has(row.task_id as string);
       }
@@ -576,18 +555,6 @@ export async function listRecurringRulesWithHistory(projectId: string): Promise<
     ...rule,
     ...buildRecurringHistory(occurrences, rule.id, today, liveTaskIds.get(rule.id) ?? null),
   }));
-}
-
-export async function listBlockers(projectId: string) {
-  const { data, error } = await getSupabaseAdmin()
-    .from("blockers")
-    .select(
-      "*, owner:profiles!blockers_owner_id_fkey(*), raiser:profiles!blockers_raised_by_fkey(*), task:tasks!blockers_task_id_fkey(id,title,assignee_id,status)",
-    )
-    .eq("project_id", projectId)
-    .order("created_at", { ascending: true });
-
-  return assertDb<Blocker[]>(data, error);
 }
 
 export async function listProjectUserFlags(projectId: string) {
@@ -854,7 +821,7 @@ export async function getManagerDashboard() {
   const today = todayISO();
   const thirtyDaysAgo = formatISO(subDays(new Date(), 30), { representation: "date" });
 
-  const [profilesResult, overdueResult, blockersResult, suggestionsResult, recurringResult, recurringRulesResult] =
+  const [profilesResult, overdueResult, blockedResult, suggestionsResult, recurringResult, recurringRulesResult] =
     await Promise.all([
       supabase.from("profiles").select("*").order("display_name"),
       supabase
@@ -864,12 +831,10 @@ export async function getManagerDashboard() {
         .neq("status", "done")
         .order("due_date", { ascending: true }),
       supabase
-        .from("blockers")
-        .select(
-          "*, owner:profiles!blockers_owner_id_fkey(*), raiser:profiles!blockers_raised_by_fkey(*), task:tasks!blockers_task_id_fkey(id,title,assignee_id,status), projects(name)",
-        )
-        .neq("status", "resolved")
-        .order("created_at", { ascending: true }),
+        .from("tasks")
+        .select("*, assignee:profiles!tasks_assignee_id_fkey(*), projects(name)")
+        .eq("status", "blocked")
+        .order("updated_at", { ascending: true }),
       supabase
         .from("suggestions")
         .select("*, author:profiles!suggestions_author_id_fkey(*), suggestion_votes(suggestion_id)")
@@ -925,12 +890,13 @@ export async function getManagerDashboard() {
       overdueResult.data,
       overdueResult.error,
     ),
-    blockers: assertDb<Array<Blocker & { projects?: { name: string } | null }>>(
-      blockersResult.data,
-      blockersResult.error,
-    ).map((blocker) => ({
-      ...blocker,
-      ageDays: differenceInCalendarDays(new Date(), new Date(blocker.created_at)),
+    blockedTasks: assertDb<Array<Task & { projects?: { name: string } | null }>>(
+      blockedResult.data,
+      blockedResult.error,
+    ).map((task) => ({
+      ...task,
+      // updated_at approximates when the task was last moved into Blocked.
+      ageDays: differenceInCalendarDays(new Date(), new Date(task.updated_at)),
     })),
     suggestions: assertDb<Array<Suggestion & { suggestion_votes?: unknown[] }>>(
       suggestionsResult.data,

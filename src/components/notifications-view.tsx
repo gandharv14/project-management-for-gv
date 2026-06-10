@@ -13,7 +13,6 @@ import { cn } from "@/lib/utils";
 
 const TYPE_LABELS: Record<NotificationType, string> = {
   assignment_created: "Assignment",
-  blocker_status_changed: "Blocker",
   recurring_task_created: "Recurring duty",
   recurring_task_missed: "Missed duty",
   suggestion_traction: "Suggestion",

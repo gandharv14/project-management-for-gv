@@ -11,7 +11,6 @@ import { getSupabaseAdmin } from "@/lib/supabase";
 import { httpUrlSchema } from "@/lib/validation";
 import { FLAG_STAGES, PROJECT_DOCUMENT_TYPES, SUGGESTION_CATEGORIES } from "@/lib/types";
 import type {
-  BlockerStatus,
   FlagStage,
   Profile,
   ProfileMembershipScope,
@@ -417,7 +416,6 @@ async function notify(input: {
   actorId?: string | null;
   type:
     | "assignment_created"
-    | "blocker_status_changed"
     | "recurring_task_created"
     | "recurring_task_missed"
     | "suggestion_traction"
@@ -427,7 +425,6 @@ async function notify(input: {
   body?: string | null;
   href?: string | null;
   taskId?: string | null;
-  blockerId?: string | null;
 }) {
   if (!input.profileId) {
     return;
@@ -441,7 +438,6 @@ async function notify(input: {
     body: input.body ?? null,
     href: input.href ?? null,
     task_id: input.taskId ?? null,
-    blocker_id: input.blockerId ?? null,
   });
 }
 
@@ -466,7 +462,6 @@ async function defaultManagerId() {
 function revalidateProjectMembership(projectId: string) {
   revalidatePath("/settings");
   revalidatePath(`/projects/${projectId}/board`);
-  revalidatePath(`/projects/${projectId}/blockers`);
   revalidatePath(`/projects/${projectId}/flags`);
   revalidatePath(`/projects/${projectId}/suggestions`);
   revalidatePath(`/projects/${projectId}/settings`);
@@ -782,7 +777,6 @@ export async function deleteProject(formData: FormData) {
   revalidatePath("/today");
   revalidatePath("/manager");
   revalidatePath(`/projects/${projectId}/board`);
-  revalidatePath(`/projects/${projectId}/blockers`);
   revalidatePath(`/projects/${projectId}/flags`);
   revalidatePath(`/projects/${projectId}/suggestions`);
 }
@@ -987,7 +981,6 @@ export async function deleteTask(formData: FormData) {
   }
 
   revalidatePath(`/projects/${projectId}/board`);
-  revalidatePath(`/projects/${projectId}/blockers`);
   revalidatePath(`/projects/${projectId}/suggestions`);
   revalidatePath("/today");
   revalidatePath("/manager");
@@ -1048,103 +1041,6 @@ export async function deleteRecurringRule(formData: FormData) {
 
   revalidatePath(`/projects/${projectId}/board`);
   revalidatePath("/today");
-  revalidatePath("/manager");
-}
-
-export async function createBlocker(formData: FormData) {
-  const profile = await ensureCurrentProfile();
-  const projectId = z.string().uuid().parse(text(formData, "projectId"));
-  const taskId = text(formData, "taskId");
-  const title = text(formData, "title");
-
-  if (!title) {
-    return;
-  }
-
-  await requireProjectAccess(profile, projectId);
-
-  const ownerId = text(formData, "ownerId") ?? (await defaultManagerId());
-
-  const { data: blocker, error: blockerError } = await getSupabaseAdmin()
-    .from("blockers")
-    .insert({
-      project_id: projectId,
-      task_id: taskId,
-      title,
-      description: text(formData, "description"),
-      owner_id: ownerId,
-      raised_by: profile.id,
-    })
-    .select("id")
-    .single();
-
-  if (blockerError) {
-    throw new Error(blockerError.message);
-  }
-
-  if (taskId) {
-    await getSupabaseAdmin().from("tasks").update({ status: "blocked" }).eq("id", taskId).eq("project_id", projectId);
-  }
-
-  await notify({
-    profileId: ownerId,
-    actorId: profile.id,
-    type: "blocker_status_changed",
-    title: "New blocker raised",
-    body: title,
-    href: `/projects/${projectId}/blockers`,
-    taskId: taskId ?? null,
-    blockerId: blocker.id,
-  });
-
-  revalidatePath(`/projects/${projectId}/board`);
-  revalidatePath(`/projects/${projectId}/blockers`);
-  revalidatePath("/manager");
-}
-
-export async function updateBlockerStatus(formData: FormData) {
-  const profile = await ensureCurrentProfile();
-  const projectId = z.string().uuid().parse(text(formData, "projectId"));
-  const blockerId = z.string().uuid().parse(text(formData, "blockerId"));
-  const status = z
-    .enum(["open", "acknowledged", "resolved"])
-    .parse(text(formData, "status")) as BlockerStatus;
-
-  await requireProjectAccess(profile, projectId);
-
-  const { data: blocker } = await getSupabaseAdmin()
-    .from("blockers")
-    .select("title, task:tasks!blockers_task_id_fkey(id, assignee_id)")
-    .eq("id", blockerId)
-    .eq("project_id", projectId)
-    .maybeSingle();
-
-  await getSupabaseAdmin()
-    .from("blockers")
-    .update({
-      status,
-      resolved_at: status === "resolved" ? new Date().toISOString() : null,
-    })
-    .eq("id", blockerId)
-    .eq("project_id", projectId);
-
-  const task = Array.isArray(blocker?.task) ? blocker?.task[0] : blocker?.task;
-
-  if (status === "resolved") {
-    await notify({
-      profileId: task?.assignee_id,
-      actorId: profile.id,
-      type: "blocker_status_changed",
-      title: "Blocker resolved",
-      body: blocker?.title ?? "A blocker was resolved. Confirm before moving the task.",
-      href: `/projects/${projectId}/board`,
-      taskId: task?.id ?? null,
-      blockerId,
-    });
-  }
-
-  revalidatePath(`/projects/${projectId}/board`);
-  revalidatePath(`/projects/${projectId}/blockers`);
   revalidatePath("/manager");
 }
 

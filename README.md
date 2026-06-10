@@ -1,6 +1,6 @@
 # Team Management App
 
-A single-tenant team management app for projects, tasks, blockers, suggestions, recurring duties, and manager reporting.
+A single-tenant team management app for projects, tasks, suggestions, recurring duties, and manager reporting.
 
 ## Stack
 

@@ -7,7 +7,7 @@ export default function ManagerLoading() {
       <div className="space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">Manager Dashboard</h1>
         <p className="text-muted-foreground">
-          Overdue tasks, aging blockers, trending ideas, and recurring duty completion.
+          Overdue tasks, blocked tickets, trending ideas, and recurring duty completion.
         </p>
       </div>
 
